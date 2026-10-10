@@ -1,0 +1,39 @@
+# Edit this file to change the business the receptionist works for.
+# No code changes needed — the persona prompt is generated from it.
+
+business:
+  name: Sunrise Dental Clinic
+  type: dental clinic
+  address: 12 Main Road, Example City
+  phone: "+91 98765 43210"
+  timezone: Asia/Kolkata
+
+hours:
+  monday: "9 AM to 7 PM"
+  tuesday: "9 AM to 7 PM"
+  wednesday: "9 AM to 7 PM"
+  thursday: "9 AM to 7 PM"
+  friday: "9 AM to 7 PM"
+  saturday: "10 AM to 2 PM"
+  sunday: closed
+
+services:
+  - name: General check-up
+    duration_minutes: 30
+  - name: Teeth cleaning
+    duration_minutes: 45
+  - name: Tooth filling
+    duration_minutes: 60
+  - name: Root canal consultation
+    duration_minutes: 30
+
+policies:
+  - Please arrive 10 minutes before your appointment.
+  - Cancellations should be made at least 24 hours in advance.
+  - Walk-ins are accepted only if a slot is free.
+
+receptionist:
+  name: Aria
+  # {business_name} and {name} are filled in automatically.
+  greeting: "Hello, thank you for calling {business_name}. This is {name}. How can I help you today?"
+  escalation: "Politely say a team member will call them back, and take their name and number."

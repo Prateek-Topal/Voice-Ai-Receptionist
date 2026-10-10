@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual env
+.venv/
+venv/
+
+# Secrets — NEVER commit these
+.env
+.env.local
+credentials.json
+token.json
+
+# Logs / recordings / local data
+logs/
+*.log
+recordings/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
