@@ -1,4 +1,6 @@
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -29,6 +31,21 @@ def test_instructions_have_no_unfilled_placeholders(persona):
     assert "Teeth cleaning" in text
     assert "Sunday: closed" in text
     assert "Answer questions." in text
+
+
+def test_instructions_include_todays_date(persona):
+    fixed = datetime(2026, 10, 12, 9, 5, tzinfo=ZoneInfo("Asia/Kolkata"))
+    text = persona.instructions(now=fixed)
+    assert "Today is Monday, 12 October 2026" in text
+    assert "9:05 AM" in text
+
+
+def test_keyterms_include_services_and_business(persona):
+    terms = persona.keyterms()
+    assert "Sunrise Dental Clinic" in terms
+    assert "Root canal consultation" in terms
+    assert "appointment" in terms
+    assert len(terms) == len(set(terms))
 
 
 def test_missing_section_raises(tmp_path):

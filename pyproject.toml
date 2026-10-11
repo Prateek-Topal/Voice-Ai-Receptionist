@@ -2,7 +2,7 @@
 name = "voice-ai-receptionist"
 version = "0.1.0"
 description = "AI voice receptionist that answers calls and books appointments"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

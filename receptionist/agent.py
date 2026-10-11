@@ -1,36 +1,35 @@
 """LiveKit voice agent: Incoming call -> STT -> LLM -> TTS -> Caller.
 
-Day 1: pipeline runs on LiveKit Inference so it works with only LiveKit credentials.
-Day 2/3 replace the model objects in `build_session()`; nothing else changes.
+Day 2: STT = Deepgram (direct), LLM = Groq (direct), TTS = LiveKit Inference.
+Providers are chosen in .env.local; see receptionist/providers.py.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import time
+from pathlib import Path
 
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, inference
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext
 
-from receptionist.config import load_settings
-from receptionist.persona import Persona
+from receptionist.config import PROJECT_ROOT, load_settings
+from receptionist.latency import LatencyTracker
+from receptionist.persona import DEFAULT_CAPABILITIES, Persona
+from receptionist.providers import build_llm, build_stt, build_tts
 
 settings = load_settings()
 logger = logging.getLogger("receptionist")
 logger.setLevel(settings.log_level)
 
 persona = Persona.from_yaml(settings.business_config_path)
-
-# What the agent is allowed to promise. This list grows as tools are added (Day 4).
-CAPABILITIES = [
-    "Answer questions about the business using only the information above.",
-    "You cannot check the calendar or book appointments yet. Collect the caller's name, "
-    "service, preferred date and time, and phone number, then tell them the team will "
-    "call back to confirm.",
-]
+LOG_DIR = PROJECT_ROOT / "logs"
 
 
 class Receptionist(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions=persona.instructions(CAPABILITIES))
+        # Built per call so "today's date" is always current.
+        super().__init__(instructions=persona.instructions(DEFAULT_CAPABILITIES))
 
     async def on_enter(self) -> None:
         # Fixed greeting = predictable and fast (no LLM round-trip on pickup).
@@ -39,14 +38,14 @@ class Receptionist(Agent):
 
 def build_session() -> AgentSession:
     return AgentSession(
-        stt=inference.STT(model=settings.stt_model, language=settings.stt_language),
-        llm=inference.LLM(model=settings.llm_model),
-        tts=inference.TTS(model=settings.tts_model, voice=settings.tts_voice),
+        stt=build_stt(settings, persona),
+        llm=build_llm(settings),
+        tts=build_tts(settings),
     )
 
 
-def attach_event_logging(session: AgentSession) -> None:
-    """Log the conversation so we can see the pipeline working (and debug it)."""
+def attach_logging_and_latency(session: AgentSession, room_name: str) -> None:
+    tracker = LatencyTracker()
 
     @session.on("agent_state_changed")
     def _on_state(ev) -> None:
@@ -60,12 +59,40 @@ def attach_event_logging(session: AgentSession) -> None:
     @session.on("conversation_item_added")
     def _on_item(ev) -> None:
         item = ev.item
-        if getattr(item, "role", None) == "assistant":
+        role = getattr(item, "role", None)
+        metrics = dict(getattr(item, "metrics", None) or {})
+        if role == "user":
+            tracker.on_user_message(metrics)
+        elif role == "assistant":
             logger.info("%s: %s", persona.name.upper(), getattr(item, "text_content", ""))
+            turn = tracker.on_assistant_message(metrics)
+            if turn:
+                logger.info("LATENCY %s", turn.describe())
 
     @session.on("close")
     def _on_close(ev) -> None:
+        summary = tracker.summary()
         logger.info("call ended (reason=%s)", getattr(ev, "reason", "unknown"))
+        logger.info("LATENCY SUMMARY %s", summary)
+        _save_latency(room_name, summary, tracker.to_records())
+
+
+def _save_latency(room_name: str, summary: dict, turns: list[dict]) -> None:
+    """Append one line per call to logs/latency.jsonl (used for Day 6 metrics)."""
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        record = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "room": room_name,
+            "stt": settings.stt_provider,
+            "llm": settings.groq_model if settings.llm_provider == "groq" else settings.llm_model,
+            "summary": summary,
+            "turns": turns,
+        }
+        with Path(LOG_DIR / "latency.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError as e:
+        logger.warning("could not save latency log: %s", e)
 
 
 server = AgentServer()
@@ -77,7 +104,7 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("incoming session in room %s", ctx.room.name)
 
     session = build_session()
-    attach_event_logging(session)
+    attach_logging_and_latency(session, ctx.room.name)
 
     await session.start(agent=Receptionist(), room=ctx.room)
     await ctx.connect()

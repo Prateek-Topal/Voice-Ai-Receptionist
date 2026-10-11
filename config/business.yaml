@@ -37,3 +37,8 @@ receptionist:
   # {business_name} and {name} are filled in automatically.
   greeting: "Hello, thank you for calling {business_name}. This is {name}. How can I help you today?"
   escalation: "Politely say a team member will call them back, and take their name and number."
+  # Extra words the speech-to-text should recognise reliably.
+  extra_keyterms:
+    - appointment
+    - reschedule
+    - dentist
