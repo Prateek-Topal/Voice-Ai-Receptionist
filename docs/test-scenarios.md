@@ -22,3 +22,25 @@ After each call, note the `LATENCY SUMMARY` line from the terminal.
 | | 4 | | | | |
 | | 5 | | | | |
 | | 6 | | | | |
+
+# Day 3 — voice, pauses and interruptions
+
+| # | Scenario | What you do | Aria should… |
+|---|---|---|---|
+| 7 | Pause mid-number | "My number is seven zero nine three…" (pause 1 second) "…seven six seven nine nine three." | Wait for the full number, not reply after the first half. |
+| 8 | Interrupt her | While she's listing services, say "Actually, just a cleaning." | Stop within about half a second and respond to "cleaning". Log shows `[interrupted by caller]`. |
+| 9 | Backchannel / noise | Say "mm-hmm" or cough while she's talking. | Keep talking (or resume within ~1.5s). |
+| 10 | Silent caller | After her question, stay silent for 10s, then 10s more, then 10s more. | Ask "are you still there?" twice, then say goodbye and hang up. |
+| 11 | Natural ending | "That's all, thank you. Bye!" | Say one short goodbye and end the call (no goodbye loop). |
+| 12 | Voice quality | Listen to a full booking call. | Natural voice, dates like "the seventeenth of October", numbers read in groups. |
+
+## Day 3 results
+
+| Date | # | Pass? | Notes |
+|---|---|---|---|
+| | 7 | | |
+| | 8 | | |
+| | 9 | | |
+| | 10 | | |
+| | 11 | | |
+| | 12 | | |

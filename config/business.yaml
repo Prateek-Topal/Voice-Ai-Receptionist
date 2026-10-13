@@ -26,6 +26,8 @@ services:
     duration_minutes: 60
   - name: Root canal consultation
     duration_minutes: 30
+  - name: Tooth extraction
+    duration_minutes: 45
 
 policies:
   - Please arrive 10 minutes before your appointment.
@@ -36,6 +38,10 @@ receptionist:
   name: Aria
   # {business_name} and {name} are filled in automatically.
   greeting: "Hello, thank you for calling {business_name}. This is {name}. How can I help you today?"
+  # Said when the caller says goodbye, right before hanging up.
+  farewell: "Thanks for calling {business_name}. Take care, goodbye!"
+  # Expected digits in a caller's phone number (10 for Indian mobiles).
+  phone_digits: 10
   escalation: "Politely say a team member will call them back, and take their name and number."
   # Extra words the speech-to-text should recognise reliably.
   extra_keyterms:

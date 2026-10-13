@@ -1,16 +1,20 @@
-"""Builds the STT / LLM / TTS objects from settings.
+"""Builds the STT / LLM / TTS objects and turn-taking options from settings.
 
 Switching provider = change one line in .env.local, no code changes:
-    STT_PROVIDER=deepgram | inference
-    LLM_PROVIDER=groq     | inference
+    STT_PROVIDER=deepgram   | inference
+    LLM_PROVIDER=groq       | inference
+    TTS_PROVIDER=elevenlabs | inference
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
-from livekit.agents import inference
-from livekit.plugins import deepgram, groq
+from livekit.agents import inference, llm
+
+# Plugins must be imported at startup (main thread), never inside functions.
+from livekit.plugins import deepgram, elevenlabs, groq
 
 from receptionist.config import Settings
 from receptionist.persona import Persona
@@ -42,16 +46,83 @@ def build_stt(settings: Settings, persona: Persona):
 def build_llm(settings: Settings):
     if settings.llm_provider == "groq":
         # For openai/gpt-oss-* the plugin defaults reasoning_effort to "low" (fast replies).
+        primary = groq.LLM(model=settings.groq_model, temperature=settings.llm_temperature)
+        if not settings.llm_fallback:
+            logger.info("LLM: Groq %s (no fallback)", settings.groq_model)
+            return primary
+        # On a rate limit (429) or outage, switch to LiveKit Inference immediately
+        # instead of retrying Groq and leaving the caller in silence.
         logger.info(
-            "LLM: Groq %s (temperature %.1f)", settings.groq_model, settings.llm_temperature
+            "LLM: Groq %s, falling back to LiveKit Inference %s",
+            settings.groq_model,
+            settings.llm_model,
         )
-        return groq.LLM(model=settings.groq_model, temperature=settings.llm_temperature)
+        return llm.FallbackAdapter(
+            [primary, inference.LLM(model=settings.llm_model)],
+            attempt_timeout=5.0,
+            max_retry_per_llm=0,
+        )
 
     logger.info("LLM: LiveKit Inference %s", settings.llm_model)
     return inference.LLM(model=settings.llm_model)
 
 
 def build_tts(settings: Settings):
-    # Day 3 replaces this with ElevenLabs.
+    if settings.tts_provider == "elevenlabs":
+        logger.info(
+            "TTS: ElevenLabs %s, voice %s, speed %.2f",
+            settings.elevenlabs_model,
+            settings.elevenlabs_voice_id,
+            settings.voice_speed,
+        )
+        return elevenlabs.TTS(
+            api_key=os.getenv("ELEVENLABS_API_KEY"),
+            voice_id=settings.elevenlabs_voice_id,
+            model=settings.elevenlabs_model,
+            voice_settings=elevenlabs.VoiceSettings(
+                stability=settings.voice_stability,
+                similarity_boost=0.75,
+                speed=settings.voice_speed,
+            ),
+        )
+
     logger.info("TTS: LiveKit Inference %s", settings.tts_model)
     return inference.TTS(model=settings.tts_model, voice=settings.tts_voice)
+
+
+def build_turn_handling(settings: Settings) -> dict:
+    """When to reply (endpointing) and when to stop talking (interruptions).
+
+    Turn detection itself is left on auto: LiveKit's turn-detector model decides
+    whether the caller has *finished a thought*, and endpointing sets how long
+    to wait around that decision.
+    """
+    logger.info(
+        "Turns: endpointing %s %.1f-%.1fs, interruption >= %.1fs, resume after %.1fs, "
+        "preemptive %s",
+        settings.endpointing_mode,
+        settings.min_endpointing_delay,
+        settings.max_endpointing_delay,
+        settings.min_interruption_duration,
+        settings.false_interruption_timeout,
+        "on" if settings.preemptive_generation else "off",
+    )
+    return {
+        # Off by default: on Groq's free tier the extra speculative requests cause rate limits.
+        "preemptive_generation": {"enabled": settings.preemptive_generation},
+        "endpointing": {
+            "mode": settings.endpointing_mode,
+            # Wait at least this long after speech stops (turn detector says "done").
+            "min_delay": settings.min_endpointing_delay,
+            # Never wait longer than this, even mid-sentence pauses (e.g. reading a number).
+            "max_delay": settings.max_endpointing_delay,
+        },
+        "interruption": {
+            "enabled": True,
+            # Ignore short sounds: coughs, "mm", background noise.
+            "min_duration": settings.min_interruption_duration,
+            # If the "interruption" was noise, pick up where Aria left off.
+            "resume_false_interruption": True,
+            "false_interruption_timeout": settings.false_interruption_timeout,
+        },
+    }

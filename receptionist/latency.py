@@ -40,13 +40,16 @@ class TurnLatency:
 @dataclass
 class LatencyTracker:
     turns: list[TurnLatency] = field(default_factory=list)
+    interruptions: int = 0
     _pending_end_of_turn: float | None = None
 
     def on_user_message(self, metrics: dict) -> None:
         self._pending_end_of_turn = metrics.get("end_of_turn_delay")
 
-    def on_assistant_message(self, metrics: dict) -> TurnLatency | None:
+    def on_assistant_message(self, metrics: dict, interrupted: bool = False) -> TurnLatency | None:
         """Record a reply. Returns None for speech without an LLM step (e.g. the greeting)."""
+        if interrupted:
+            self.interruptions += 1
         ttft = metrics.get("llm_node_ttft")
         if ttft is None:
             return None
@@ -67,7 +70,7 @@ class LatencyTracker:
 
     def summary(self) -> dict:
         if not self.turns:
-            return {"turns": 0}
+            return {"turns": 0, "interruptions": self.interruptions}
         totals = [t.e2e for t in self.turns]
 
         def avg(values: list[float | None]) -> float | None:
@@ -76,6 +79,7 @@ class LatencyTracker:
 
         return {
             "turns": len(totals),
+            "interruptions": self.interruptions,
             "avg_total_s": round(statistics.mean(totals), 2),
             "median_total_s": round(statistics.median(totals), 2),
             "max_total_s": round(max(totals), 2),

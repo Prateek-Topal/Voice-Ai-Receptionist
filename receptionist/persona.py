@@ -63,6 +63,12 @@ class Persona:
             business_name=self.business["name"], name=self.name
         )
 
+    @property
+    def farewell(self) -> str:
+        return self.receptionist.get(
+            "farewell", "Thanks for calling {business_name}. Take care, goodbye!"
+        ).format(business_name=self.business["name"], name=self.name)
+
     def keyterms(self) -> list[str]:
         """Words the speech-to-text should listen out for."""
         terms = [self.business["name"], self.name]
@@ -102,6 +108,7 @@ class Persona:
             hours=self._hours_text(),
             services=self._services_text(),
             policies="\n".join(f"- {p}" for p in self.policies) or "- None",
+            phone_digits=str(self.receptionist.get("phone_digits", 10)),
             capabilities="\n".join(f"- {c}" for c in (capabilities or DEFAULT_CAPABILITIES)),
             escalation=self.receptionist.get(
                 "escalation", "Offer to take a message for the team."

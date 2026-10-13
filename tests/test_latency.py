@@ -21,7 +21,7 @@ def test_falls_back_to_sum_without_e2e():
 def test_greeting_without_llm_is_ignored():
     t = LatencyTracker()
     assert t.on_assistant_message({"tts_node_ttfb": 0.2}) is None
-    assert t.summary() == {"turns": 0}
+    assert t.summary() == {"turns": 0, "interruptions": 0}
 
 
 def test_summary():
@@ -35,3 +35,12 @@ def test_summary():
     assert s["max_total_s"] == 2.0
     assert s["under_1s_pct"] == 33
     assert s["avg_endpointing_s"] == 0.4
+
+
+def test_interruptions_counted():
+    t = LatencyTracker()
+    t.on_user_message({"end_of_turn_delay": 0.4})
+    t.on_assistant_message({"llm_node_ttft": 0.3, "e2e_latency": 0.9}, interrupted=True)
+    t.on_user_message({"end_of_turn_delay": 0.4})
+    t.on_assistant_message({"llm_node_ttft": 0.3, "e2e_latency": 0.9})
+    assert t.summary()["interruptions"] == 1

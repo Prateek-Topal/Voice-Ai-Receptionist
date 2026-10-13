@@ -1,4 +1,4 @@
-livekit-agents[deepgram,groq]>=1.8,<2
+livekit-agents[deepgram,groq,elevenlabs]>=1.8,<2
 openai>=1.40
 python-dotenv>=1.0
 PyYAML>=6.0

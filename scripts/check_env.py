@@ -23,14 +23,21 @@ check(
 )
 
 for pkg in ("livekit.agents", "livekit.plugins.deepgram", "livekit.plugins.groq",
-            "openai", "dotenv", "yaml", "tzdata"):
+            "livekit.plugins.elevenlabs", "openai", "dotenv", "yaml", "tzdata"):
     try:
         importlib.import_module(pkg)
         check(f"package {pkg}", True)
     except ImportError:
         check(f"package {pkg}", False, "pip install -r requirements-dev.txt")
 
-check(".env.local exists", (ROOT / ".env.local").exists(), "copy .env.example to .env.local")
+env_file = ROOT / ".env.local"
+check(".env.local exists", env_file.exists(), "copy .env.example to .env.local")
+if env_file.exists():
+    keys = [ln.split("=", 1)[0].strip() for ln in env_file.read_text(encoding="utf-8").splitlines()
+            if "=" in ln and not ln.strip().startswith("#")]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    check("no duplicate keys in .env.local", not dupes,
+          f"remove the extra line(s) for {', '.join(dupes)} (the LAST one wins)")
 
 from receptionist.config import (  # noqa: E402
     load_settings,
@@ -45,8 +52,12 @@ check("LiveKit credentials set", not missing, f"fill in {', '.join(missing)} in 
 
 try:
     s = load_settings()
-    print(f"     STT={s.stt_provider}  LLM={s.llm_provider}"
-          f" ({s.groq_model if s.llm_provider == 'groq' else s.llm_model})")
+    llm_name = s.groq_model if s.llm_provider == "groq" else s.llm_model
+    tts_name = s.elevenlabs_model if s.tts_provider == "elevenlabs" else s.tts_model
+    print(f"     STT={s.stt_provider}  LLM={s.llm_provider} ({llm_name})"
+          f"  TTS={s.tts_provider} ({tts_name})")
+    print(f"     turns: endpointing {s.endpointing_mode} {s.min_endpointing_delay}"
+          f"-{s.max_endpointing_delay}s, silence check after {s.user_away_timeout:.0f}s")
     prov_missing = missing_vars(required_provider_vars(s))
     check("provider API keys set", not prov_missing,
           f"fill in {', '.join(prov_missing)} in .env.local")

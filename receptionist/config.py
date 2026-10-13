@@ -1,4 +1,4 @@
-"""Settings loaded from .env.local (secrets + provider/model choices)."""
+"""Settings loaded from .env.local (secrets + provider/model choices + turn-taking)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ load_dotenv(PROJECT_ROOT / ".env.local", override=True)
 REQUIRED_LIVEKIT_VARS = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
 STT_PROVIDERS = ("deepgram", "inference")
 LLM_PROVIDERS = ("groq", "inference")
+TTS_PROVIDERS = ("elevenlabs", "inference")
+ENDPOINTING_MODES = ("fixed", "dynamic")
 
 
 class ConfigError(RuntimeError):
@@ -37,9 +39,23 @@ class Settings:
     groq_model: str
     llm_temperature: float
     llm_model: str  # inference fallback
+    llm_fallback: bool  # fall back to LiveKit Inference if Groq fails / rate-limits
+    preemptive_generation: bool
     # text-to-speech
-    tts_model: str
-    tts_voice: str
+    tts_provider: str
+    elevenlabs_voice_id: str
+    elevenlabs_model: str
+    voice_speed: float
+    voice_stability: float
+    tts_model: str  # inference fallback
+    tts_voice: str  # inference fallback
+    # turn-taking
+    endpointing_mode: str
+    min_endpointing_delay: float
+    max_endpointing_delay: float
+    min_interruption_duration: float
+    false_interruption_timeout: float
+    user_away_timeout: float
     # app
     business_config_path: Path
     log_level: str
@@ -64,7 +80,36 @@ def required_provider_vars(settings: Settings) -> list[str]:
         needed.append("DEEPGRAM_API_KEY")
     if settings.llm_provider == "groq":
         needed.append("GROQ_API_KEY")
+    if settings.tts_provider == "elevenlabs":
+        needed.append("ELEVENLABS_API_KEY")
     return needed
+
+
+def _float(name: str, default: float, lo: float, hi: float) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        value = float(raw)
+    except ValueError as e:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from e
+    if not lo <= value <= hi:
+        raise ConfigError(f"{name} must be between {lo} and {hi}, got {value}")
+    return value
+
+
+def _bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, str(default)).strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise ConfigError(f"{name} must be true or false, got {raw!r}")
+
+
+def _choice(name: str, default: str, options: tuple[str, ...]) -> str:
+    value = os.getenv(name, default).strip().lower()
+    if value not in options:
+        raise ConfigError(f"{name} must be one of {options}, got {value!r}")
+    return value
 
 
 def load_settings() -> Settings:
@@ -74,26 +119,37 @@ def load_settings() -> Settings:
     if not path.exists():
         raise ConfigError(f"Business config not found: {path}")
 
-    stt_provider = os.getenv("STT_PROVIDER", "deepgram").strip().lower()
-    llm_provider = os.getenv("LLM_PROVIDER", "groq").strip().lower()
-    if stt_provider not in STT_PROVIDERS:
-        raise ConfigError(f"STT_PROVIDER must be one of {STT_PROVIDERS}, got {stt_provider!r}")
-    if llm_provider not in LLM_PROVIDERS:
-        raise ConfigError(f"LLM_PROVIDER must be one of {LLM_PROVIDERS}, got {llm_provider!r}")
+    min_delay = _float("MIN_ENDPOINTING_DELAY", 0.5, 0.1, 3.0)
+    max_delay = _float("MAX_ENDPOINTING_DELAY", 1.5, 0.3, 6.0)
+    if max_delay < min_delay:
+        raise ConfigError("MAX_ENDPOINTING_DELAY must be >= MIN_ENDPOINTING_DELAY")
 
     return Settings(
         agent_name=os.getenv("AGENT_NAME", "receptionist"),
-        stt_provider=stt_provider,
+        stt_provider=_choice("STT_PROVIDER", "deepgram", STT_PROVIDERS),
         deepgram_model=os.getenv("DEEPGRAM_MODEL", "nova-3"),
         deepgram_language=os.getenv("DEEPGRAM_LANGUAGE", "en"),
         stt_model=os.getenv("STT_MODEL", "deepgram/nova-3-general"),
         stt_language=os.getenv("STT_LANGUAGE", "en"),
-        llm_provider=llm_provider,
+        llm_provider=_choice("LLM_PROVIDER", "groq", LLM_PROVIDERS),
         groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-        llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.4")),
+        llm_temperature=_float("LLM_TEMPERATURE", 0.4, 0.0, 2.0),
         llm_model=os.getenv("LLM_MODEL", "google/gemma-4-31b-it"),
+        llm_fallback=_bool("LLM_FALLBACK", True),
+        preemptive_generation=_bool("PREEMPTIVE_GENERATION", False),
+        tts_provider=_choice("TTS_PROVIDER", "elevenlabs", TTS_PROVIDERS),
+        elevenlabs_voice_id=os.getenv("ELEVENLABS_VOICE_ID", "hpp4J3VqNfWAUOO0d1Us"),
+        elevenlabs_model=os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
+        voice_speed=_float("VOICE_SPEED", 1.0, 0.7, 1.2),
+        voice_stability=_float("VOICE_STABILITY", 0.5, 0.0, 1.0),
         tts_model=os.getenv("TTS_MODEL", "fishaudio/s2.1-pro"),
         tts_voice=os.getenv("TTS_VOICE", "fa4c9eb3dccc4806b382b40d61c6b10a"),
+        endpointing_mode=_choice("ENDPOINTING_MODE", "fixed", ENDPOINTING_MODES),
+        min_endpointing_delay=min_delay,
+        max_endpointing_delay=max_delay,
+        min_interruption_duration=_float("MIN_INTERRUPTION_DURATION", 0.5, 0.1, 3.0),
+        false_interruption_timeout=_float("FALSE_INTERRUPTION_TIMEOUT", 1.5, 0.5, 5.0),
+        user_away_timeout=_float("USER_AWAY_TIMEOUT", 10.0, 3.0, 120.0),
         business_config_path=path,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

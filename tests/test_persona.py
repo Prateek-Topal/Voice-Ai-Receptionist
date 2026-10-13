@@ -53,3 +53,27 @@ def test_missing_section_raises(tmp_path):
     bad.write_text("business:\n  name: X\n", encoding="utf-8")
     with pytest.raises(ValueError):
         Persona.from_yaml(bad)
+
+
+def test_prompt_has_spoken_style_and_end_call(persona):
+    text = persona.instructions()
+    assert "hangs up automatically" in text
+    assert "seven zero nine three" not in text  # no copyable example values
+    assert "interrupts you" in text
+
+
+def test_prompt_has_phone_digit_rule(persona):
+    text = persona.instructions()
+    assert "have 10 digits" in text
+    assert "do NOT ask them to confirm again" in text
+
+
+def test_farewell_filled_in(persona):
+    assert "Sunrise Dental Clinic" in persona.farewell
+    assert "{" not in persona.farewell
+
+
+def test_prompt_forbids_inventing_details(persona):
+    text = persona.instructions()
+    assert "Never make one up" in text
+    assert "seventeenth of October" not in text
