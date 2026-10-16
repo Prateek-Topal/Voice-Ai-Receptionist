@@ -13,13 +13,32 @@ import logging
 import time
 from pathlib import Path
 
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, StopResponse
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    RunContext,
+    StopResponse,
+    function_tool,
+)
 
-from receptionist.call_control import caller_is_done, last_agent_text
+from receptionist.call_control import (
+    caller_is_done,
+    is_affirmative,
+    last_agent_text,
+    last_user_text,
+)
 from receptionist.config import PROJECT_ROOT, load_settings
 from receptionist.latency import LatencyTracker
-from receptionist.persona import DEFAULT_CAPABILITIES, Persona
-from receptionist.providers import build_llm, build_stt, build_tts, build_turn_handling
+from receptionist.persona import BOOKING_CAPABILITIES, Persona
+from receptionist.providers import (
+    build_llm,
+    build_scheduler,
+    build_stt,
+    build_tts,
+    build_turn_handling,
+)
 from receptionist.reply_guard import ReplyLimiter
 
 settings = load_settings()
@@ -30,6 +49,7 @@ logger.setLevel(settings.log_level)
 logging.getLogger("livekit.plugins.elevenlabs").setLevel(logging.INFO)
 
 persona = Persona.from_yaml(settings.business_config_path)
+scheduler = build_scheduler(settings, persona)
 LOG_DIR = PROJECT_ROOT / "logs"
 
 # How many "are you still there?" check-ins before hanging up on a silent line.
@@ -56,8 +76,67 @@ def hang_up(session: AgentSession, farewell: str) -> None:
 
 class Receptionist(Agent):
     def __init__(self) -> None:
-        # No end-call tool: the LLM can't hang up. on_user_turn_completed decides that.
-        super().__init__(instructions=persona.instructions(DEFAULT_CAPABILITIES))
+        # Tools: check_availability + book_appointment (below). No end-call tool:
+        # the LLM can't hang up, on_user_turn_completed decides that.
+        super().__init__(instructions=persona.instructions(BOOKING_CAPABILITIES))
+
+    @function_tool
+    async def check_availability(
+        self,
+        context: RunContext,
+        date: str,
+        service: str,
+        preferred_time: str | None = None,
+    ) -> str:
+        """Look up free appointment times in the clinic's calendar.
+
+        Call this as soon as you know the service and the day the caller wants.
+
+        Args:
+            date: The day in YYYY-MM-DD format, worked out from today's date.
+            service: The service the caller wants, using a name from the services list.
+            preferred_time: The time the caller asked for, as 24-hour HH:MM. Leave empty if
+                they didn't say a time.
+        """
+        logger.info("TOOL check_availability(date=%s, service=%s, time=%s)",
+                    date, service, preferred_time)
+        result = await scheduler.check_availability(date, service, preferred_time)
+        logger.info("TOOL result: %s", result)
+        return result
+
+    @function_tool
+    async def book_appointment(
+        self,
+        context: RunContext,
+        name: str,
+        phone: str,
+        service: str,
+        date: str,
+        time: str,
+    ) -> str:
+        """Book the appointment in the clinic's calendar.
+
+        Only call this after you have read all the details back to the caller and they
+        clearly said yes.
+
+        Args:
+            name: The caller's full name, exactly as they said it.
+            phone: The caller's phone number, digits only.
+            service: The service, using a name from the services list.
+            date: The day in YYYY-MM-DD format.
+            time: The start time as 24-hour HH:MM, one of the free times you offered.
+        """
+        said = last_user_text(context.session.history.items)
+        if not is_affirmative(said):
+            logger.info("TOOL book_appointment BLOCKED: caller hasn't confirmed (last: %r)", said)
+            return (
+                "NOT BOOKED: the caller has not confirmed yet. Read back the service, day, "
+                "time, name and phone number, and ask if it's correct."
+            )
+        logger.info("TOOL book_appointment(%s, %s, %s, %s %s)", name, phone, service, date, time)
+        result = await scheduler.book(name, phone, service, date, time)
+        logger.info("TOOL result: %s", result)
+        return result
 
     async def on_enter(self) -> None:
         # Fixed greeting = predictable and fast (no LLM round-trip on pickup).

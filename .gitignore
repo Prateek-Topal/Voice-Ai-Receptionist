@@ -12,8 +12,11 @@ venv/
 # Secrets — NEVER commit these
 .env
 .env.local
+env.local
+credentials/
 credentials.json
 token.json
+*service-account*.json
 
 # Logs / recordings / local data
 logs/

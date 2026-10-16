@@ -2,7 +2,7 @@
 
 An AI voice receptionist that answers phone calls, understands what the caller wants, talks naturally, and books appointments on Google Calendar. Built for clinics, coaching centres, dealerships, and small or one-person businesses.
 
-> **Status:** Day 3 of 7 — Full voice pipeline (Deepgram → Groq → ElevenLabs) with tuned pauses, interruptions and silence handling. Booking arrives on Day 4.
+> **Status:** Day 4 of 7 — Aria checks real availability and books appointments in Google Calendar during the call, with every booking validated in code.
 
 ## How it works
 
@@ -16,9 +16,9 @@ Caller ──► LiveKit (call/audio) ──► Speech-to-Text ──► LLM age
 |---|---|---|
 | Call / audio pipeline | LiveKit Agents | 1 ✅ |
 | Speech-to-text | Deepgram Nova-3 | 2 ✅ |
-| Reasoning | Groq (gpt-oss-20b) | 2 ✅ |
+| Reasoning | Groq (gpt-oss-120b) + LiveKit Inference fallback | 2 ✅ |
 | Voice | ElevenLabs Flash v2.5 | 3 ✅ |
-| Booking | Google Calendar API | 4 |
+| Booking | Google Calendar API (service account) | 4 ✅ |
 
 See [`docs/architecture.md`](docs/architecture.md) for the detailed diagram.
 
@@ -34,11 +34,16 @@ voice-ai-receptionist/
 │   ├── config.py              # Loads .env.local settings
 │   ├── persona.py             # Builds the LLM instructions from business.yaml
 │   ├── prompts/receptionist.md# Persona prompt template
-│   └── tools/                 # Calendar tools (Day 4)
+│   ├── scheduling.py          # Opening hours, free slots, booking rules (pure, unit-tested)
+│   ├── scheduler.py           # check_availability / book logic used by the tools
+│   ├── calendar_client.py     # Google Calendar + in-memory calendar
+│   ├── call_control.py        # Goodbye + "yes" detection
+│   └── reply_guard.py         # One question per turn
 ├── config/business.yaml       # The business: name, hours, services, policies
 ├── scripts/
 │   ├── check_env.py           # Pre-flight setup check
 │   ├── chat.py                # Text-chat with Aria (no voice)
+│   ├── check_calendar.py      # Test the Google Calendar connection
 │   └── diagnose_livekit.py    # Test LiveKit credentials
 ├── tests/                     # pytest unit tests
 └── docs/                      # Architecture + daily progress log
@@ -63,6 +68,25 @@ pip install -r requirements-dev.txt
 
 python scripts/check_env.py
 ```
+
+## Google Calendar setup
+
+1. Google Cloud Console → new project → enable **Google Calendar API**.
+2. IAM & Admin → Service Accounts → create one → Keys → Add key → JSON.
+   Save it as `credentials/google-service-account.json` (ignored by git).
+3. Google Calendar → create a calendar (time zone = the business's) → Settings →
+   Share with specific people → add the service account email with **Make changes to events**.
+4. Copy the calendar's **Calendar ID** into `GOOGLE_CALENDAR_ID` in `.env.local`.
+5. `python scripts/check_calendar.py --test-book` should create and delete a test event.
+
+No Google setup? Set `CALENDAR_PROVIDER=memory` to run with a fake in-memory calendar.
+
+## How booking stays safe
+
+The LLM proposes, the code decides. Every tool call is validated in Python before it touches the calendar:
+no past times, no closed days, only within opening hours and the booking horizon, the service must exist and
+fit before closing, the phone number must have 10 digits, the slot is re-checked under a lock right before
+writing (no double-booking), and `book_appointment` refuses to run until the caller's last reply was a clear "yes".
 
 ## Run
 
@@ -97,7 +121,7 @@ Edit `config/business.yaml` — name, hours, services, policies, receptionist na
 - [x] Day 1 — Repo, structure, voice pipeline, persona
 - [x] Day 2 — Deepgram STT + Groq LLM, latency tracking
 - [x] Day 3 — ElevenLabs TTS, pauses, interruptions, silence handling, end-call
-- [ ] Day 4 — Google Calendar: check slots, book, confirm
+- [x] Day 4 — Google Calendar: check slots, book, confirm, alternatives for taken slots
 - [ ] Day 5 — Cancellations, rescheduling, edge cases
 - [ ] Day 6 — Metrics: latency, task completion, booking success
 - [ ] Day 7 — Deploy, phone number, demo video

@@ -57,3 +57,13 @@ First Day 3 test call — issues found and fixed:
 Latency (Day 2 → Day 3):
 - Day 2: _fill in_
 - Day 3: _fill in from LATENCY SUMMARY_
+
+## Day 4 — Tools (Google Calendar)
+- [x] Google Calendar integration via service account (`calendar_client.py`), calls run off the audio thread
+- [x] `check_availability` tool: real free slots from Google freebusy, opening hours, service duration, notice period
+- [x] `book_appointment` tool: creates the event (name, phone, service; phone stored for Day 5 lookups)
+- [x] Unavailable slots: offers the 3 nearest free times
+- [x] Confirm booking: only after the tool returns BOOKED; booking blocked in code until the caller says "yes"
+- [x] Guardrails in code: past/closed/out-of-hours/too-far/unknown service/short phone/double booking (93 tests)
+- [x] Model switched to gpt-oss-120b for more reliable tool calling
+- [ ] Voice test scenarios 13–19 — fill in results

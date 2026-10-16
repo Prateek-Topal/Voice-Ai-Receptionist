@@ -77,3 +77,11 @@ def test_prompt_forbids_inventing_details(persona):
     text = persona.instructions()
     assert "Never make one up" in text
     assert "seventeenth of October" not in text
+
+
+def test_booking_prompt_mentions_tools(persona):
+    from receptionist.persona import BOOKING_CAPABILITIES
+
+    text = persona.instructions(BOOKING_CAPABILITIES)
+    assert "check_availability" in text and "book_appointment" in text
+    assert "Only after the caller clearly says yes" in text

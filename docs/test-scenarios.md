@@ -44,3 +44,31 @@ After each call, note the `LATENCY SUMMARY` line from the terminal.
 | | 10 | | |
 | | 11 | | |
 | | 12 | | |
+
+
+# Day 4 — calendar booking
+
+Before testing by voice: `python scripts/check_calendar.py --test-book` must print OK twice.
+Keep calendar.google.com open to watch events appear.
+
+| # | Scenario | What you say | Aria should… |
+|---|---|---|---|
+| 13 | Happy path | "Teeth cleaning tomorrow at 11." → name → number → "Yes" | Check, collect details, read back once, book. Event appears in Google Calendar. |
+| 14 | Taken slot | Book the same time again in a new call | Say it's taken and offer the nearest 3 free times. |
+| 15 | No time given | "A check-up on Friday." | Offer a few times spread across the day. |
+| 16 | Closed day | "Sunday morning?" | Say the clinic is closed Sundays, offer another day. |
+| 17 | Outside hours | "Saturday at 5 PM" | Saturday closes at 2 PM; offer earlier times. |
+| 18 | Short number | Give 9 digits | Ask for the missing digit before booking. |
+| 19 | No confirmation | At the read-back, say "wait, change the time" | Must NOT book. Log may show `book_appointment BLOCKED`. |
+
+## Day 4 results
+
+| Date | # | Pass? | Notes |
+|---|---|---|---|
+| | 13 | | |
+| | 14 | | |
+| | 15 | | |
+| | 16 | | |
+| | 17 | | |
+| | 18 | | |
+| | 19 | | |

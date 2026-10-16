@@ -51,3 +51,19 @@ def test_last_agent_text_skips_tool_calls_and_user():
 @pytest.mark.parametrize("text", ["No. My", "No, my tooth also hurts", "Nothing, but can I ask"])
 def test_closer_followed_by_more_speech_does_not_end(text):
     assert not caller_is_done(text, ANYTHING_ELSE)
+
+
+@pytest.mark.parametrize(
+    "text", ["Yes.", "Yeah, book it", "Correct", "That's right", "Okay go ahead"]
+)
+def test_affirmative(text):
+    from receptionist.call_control import is_affirmative
+
+    assert is_affirmative(text)
+
+
+@pytest.mark.parametrize("text", ["No, that's not right", "My name is Rakesh", "Wait", ""])
+def test_not_affirmative(text):
+    from receptionist.call_control import is_affirmative
+
+    assert not is_affirmative(text)

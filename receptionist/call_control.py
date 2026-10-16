@@ -51,3 +51,24 @@ def last_agent_text(history_items) -> str:
         if getattr(item, "type", None) == "message" and getattr(item, "role", None) == "assistant":
             return getattr(item, "text_content", None) or ""
     return ""
+
+
+_AFFIRMATIVE = re.compile(
+    r"^\W*(yes|yeah|yep|yup|ya|haan|correct|that'?s (right|correct)|right|sure|ok|okay|"
+    r"go ahead|please (book|go ahead|confirm)|book it|confirm|confirmed|perfect|"
+    r"absolutely|exactly|sounds good|all correct|that'?s it)\b",
+    re.IGNORECASE,
+)
+
+
+def is_affirmative(text: str) -> bool:
+    """True if the caller's reply starts with a clear yes ("Yes", "Yeah, book it", "Correct")."""
+    return bool(_AFFIRMATIVE.match(text or ""))
+
+
+def last_user_text(history_items) -> str:
+    """Most recent thing the caller said."""
+    for item in reversed(list(history_items)):
+        if getattr(item, "type", None) == "message" and getattr(item, "role", None) == "user":
+            return getattr(item, "text_content", None) or ""
+    return ""

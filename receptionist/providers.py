@@ -126,3 +126,47 @@ def build_turn_handling(settings: Settings) -> dict:
             "false_interruption_timeout": settings.false_interruption_timeout,
         },
     }
+
+
+def build_scheduler(settings: Settings, persona: Persona):
+    """Scheduler backed by Google Calendar, or an in-memory calendar if not configured."""
+    from receptionist.calendar_client import GoogleCalendar, MemoryCalendar
+    from receptionist.scheduler import Scheduler, build_rules, services_from_config
+
+    calendar = None
+    if settings.calendar_provider == "google":
+        missing = []
+        if not settings.google_calendar_id or "your" in settings.google_calendar_id:
+            missing.append("GOOGLE_CALENDAR_ID")
+        if not settings.google_service_account_file.exists():
+            missing.append(f"service account file {settings.google_service_account_file}")
+        if missing:
+            logger.warning(
+                "Calendar: Google not configured (%s). Using an IN-MEMORY calendar: bookings "
+                "will NOT be saved.",
+                ", ".join(missing),
+            )
+        else:
+            logger.info("Calendar: Google Calendar %s", settings.google_calendar_id)
+            calendar = GoogleCalendar(
+                settings.google_calendar_id, settings.google_service_account_file, persona.timezone
+            )
+    if calendar is None:
+        if settings.calendar_provider == "memory":
+            logger.info("Calendar: in-memory (CALENDAR_PROVIDER=memory), bookings are not saved")
+        calendar = MemoryCalendar()
+
+    rules = build_rules(
+        persona.hours,
+        persona.timezone,
+        settings.slot_minutes,
+        settings.min_notice_minutes,
+        settings.booking_horizon_days,
+    )
+    return Scheduler(
+        calendar,
+        rules,
+        services_from_config(persona.services),
+        persona.business["name"],
+        phone_digits=int(persona.receptionist.get("phone_digits", 10)),
+    )

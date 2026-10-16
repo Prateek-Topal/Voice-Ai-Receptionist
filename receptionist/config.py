@@ -19,6 +19,7 @@ STT_PROVIDERS = ("deepgram", "inference")
 LLM_PROVIDERS = ("groq", "inference")
 TTS_PROVIDERS = ("elevenlabs", "inference")
 ENDPOINTING_MODES = ("fixed", "dynamic")
+CALENDAR_PROVIDERS = ("google", "memory")
 
 
 class ConfigError(RuntimeError):
@@ -56,6 +57,13 @@ class Settings:
     min_interruption_duration: float
     false_interruption_timeout: float
     user_away_timeout: float
+    # calendar (Day 4)
+    calendar_provider: str
+    google_calendar_id: str
+    google_service_account_file: Path
+    slot_minutes: int
+    min_notice_minutes: int
+    booking_horizon_days: int
     # app
     business_config_path: Path
     log_level: str
@@ -82,6 +90,8 @@ def required_provider_vars(settings: Settings) -> list[str]:
         needed.append("GROQ_API_KEY")
     if settings.tts_provider == "elevenlabs":
         needed.append("ELEVENLABS_API_KEY")
+    if settings.calendar_provider == "google":
+        needed.append("GOOGLE_CALENDAR_ID")
     return needed
 
 
@@ -94,6 +104,11 @@ def _float(name: str, default: float, lo: float, hi: float) -> float:
     if not lo <= value <= hi:
         raise ConfigError(f"{name} must be between {lo} and {hi}, got {value}")
     return value
+
+
+def _path(raw: str) -> Path:
+    p = Path(raw.strip())
+    return p if p.is_absolute() else PROJECT_ROOT / p
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -132,7 +147,7 @@ def load_settings() -> Settings:
         stt_model=os.getenv("STT_MODEL", "deepgram/nova-3-general"),
         stt_language=os.getenv("STT_LANGUAGE", "en"),
         llm_provider=_choice("LLM_PROVIDER", "groq", LLM_PROVIDERS),
-        groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+        groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
         llm_temperature=_float("LLM_TEMPERATURE", 0.4, 0.0, 2.0),
         llm_model=os.getenv("LLM_MODEL", "google/gemma-4-31b-it"),
         llm_fallback=_bool("LLM_FALLBACK", True),
@@ -150,6 +165,14 @@ def load_settings() -> Settings:
         min_interruption_duration=_float("MIN_INTERRUPTION_DURATION", 0.5, 0.1, 3.0),
         false_interruption_timeout=_float("FALSE_INTERRUPTION_TIMEOUT", 1.5, 0.5, 5.0),
         user_away_timeout=_float("USER_AWAY_TIMEOUT", 10.0, 3.0, 120.0),
+        calendar_provider=_choice("CALENDAR_PROVIDER", "google", CALENDAR_PROVIDERS),
+        google_calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "").strip(),
+        google_service_account_file=_path(
+            os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials/google-service-account.json")
+        ),
+        slot_minutes=int(_float("SLOT_MINUTES", 30, 5, 240)),
+        min_notice_minutes=int(_float("MIN_NOTICE_MINUTES", 60, 0, 10080)),
+        booking_horizon_days=int(_float("BOOKING_HORIZON_DAYS", 30, 1, 365)),
         business_config_path=path,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

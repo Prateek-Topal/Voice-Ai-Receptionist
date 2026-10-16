@@ -23,7 +23,8 @@ check(
 )
 
 for pkg in ("livekit.agents", "livekit.plugins.deepgram", "livekit.plugins.groq",
-            "livekit.plugins.elevenlabs", "openai", "dotenv", "yaml", "tzdata"):
+            "livekit.plugins.elevenlabs", "openai", "dotenv", "yaml", "tzdata",
+            "googleapiclient", "google.oauth2"):
     try:
         importlib.import_module(pkg)
         check(f"package {pkg}", True)
@@ -61,11 +62,16 @@ try:
     prov_missing = missing_vars(required_provider_vars(s))
     check("provider API keys set", not prov_missing,
           f"fill in {', '.join(prov_missing)} in .env.local")
+    print(f"     calendar: {s.calendar_provider}")
+    if s.calendar_provider == "google":
+        check("Google service account file", s.google_service_account_file.exists(),
+              f"put the JSON key at {s.google_service_account_file}")
     p = Persona.from_yaml(s.business_config_path)
     p.instructions()
     check(f"persona '{p.name}' for '{p.business['name']}' (today: {p.now():%a %d %b})", True)
 except Exception as e:  # noqa: BLE001
     check("settings/persona", False, str(e))
 
-print("\nAll good — run: python main.py console" if ok else "\nFix the FAIL items above.")
+print("\nAll good — next: python scripts/check_calendar.py --test-book" if ok
+      else "\nFix the FAIL items above.")
 sys.exit(0 if ok else 1)
