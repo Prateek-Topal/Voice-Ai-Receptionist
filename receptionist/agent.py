@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from pathlib import Path
 
 from livekit.agents import (
@@ -29,6 +28,7 @@ from receptionist.call_control import (
     last_agent_text,
     last_user_text,
 )
+from receptionist.call_record import CallRecord
 from receptionist.config import PROJECT_ROOT, load_settings
 from receptionist.latency import LatencyTracker
 from receptionist.persona import BOOKING_CAPABILITIES, Persona
@@ -58,11 +58,14 @@ MAX_SILENCE_CHECKS = 2
 _background_tasks: set[asyncio.Task] = set()
 
 
-def hang_up(session: AgentSession, farewell: str) -> None:
+def hang_up(session: AgentSession, farewell: str, reason: str = "caller_goodbye") -> None:
     """Say a final line, then end the call once it has finished playing."""
     if getattr(session, "_receptionist_hanging_up", False):
         return
     session._receptionist_hanging_up = True
+    record = getattr(session, "_receptionist_record", None)
+    if record is not None:
+        record.end(reason)
 
     async def _run() -> None:
         handle = session.say(farewell, allow_interruptions=False)
@@ -85,7 +88,14 @@ class Receptionist(Agent):
         # the LLM can't hang up, on_user_turn_completed decides that.
         self.scheduler = booking_scheduler or scheduler
         self._greet = greet
+        self.record: CallRecord | None = None  # set per call by the entrypoint
         super().__init__(instructions=persona.instructions(BOOKING_CAPABILITIES))
+
+    def _log_tool(self, name: str, result: str) -> str:
+        logger.info("TOOL result: %s", result)
+        if self.record is not None:
+            self.record.tool(name, result)
+        return result
 
     def _confirmed(self, context: RunContext, tool: str) -> bool:
         said = last_user_text(context.session.history.items)
@@ -115,8 +125,7 @@ class Receptionist(Agent):
         logger.info("TOOL check_availability(date=%s, service=%s, time=%s)",
                     date, service, preferred_time)
         result = await self.scheduler.check_availability(date, service, preferred_time)
-        logger.info("TOOL result: %s", result)
-        return result
+        return self._log_tool("check_availability", result)
 
     @function_tool
     async def book_appointment(
@@ -141,11 +150,10 @@ class Receptionist(Agent):
             time: The start time as 24-hour HH:MM, one of the free times you offered.
         """
         if not self._confirmed(context, "book_appointment"):
-            return f"NOT BOOKED: {CONFIRM_FIRST}"
+            return self._log_tool("book_appointment", f"NOT BOOKED: {CONFIRM_FIRST}")
         logger.info("TOOL book_appointment(%s, %s, %s, %s %s)", name, phone, service, date, time)
         result = await self.scheduler.book(name, phone, service, date, time)
-        logger.info("TOOL result: %s", result)
-        return result
+        return self._log_tool("book_appointment", result)
 
     @function_tool
     async def find_booking(self, context: RunContext, phone: str) -> str:
@@ -156,8 +164,7 @@ class Receptionist(Agent):
         """
         logger.info("TOOL find_booking(%s)", phone)
         result = await self.scheduler.find_bookings(phone)
-        logger.info("TOOL result: %s", result)
-        return result
+        return self._log_tool("find_booking", result)
 
     @function_tool
     async def cancel_appointment(
@@ -174,11 +181,10 @@ class Receptionist(Agent):
                 more than one appointment that day.
         """
         if not self._confirmed(context, "cancel_appointment"):
-            return f"NOT CANCELLED: {CONFIRM_FIRST}"
+            return self._log_tool("cancel_appointment", f"NOT CANCELLED: {CONFIRM_FIRST}")
         logger.info("TOOL cancel_appointment(%s, %s %s)", phone, date, time)
         result = await self.scheduler.cancel(phone, date, time)
-        logger.info("TOOL result: %s", result)
-        return result
+        return self._log_tool("cancel_appointment", result)
 
     @function_tool
     async def reschedule_appointment(
@@ -204,14 +210,15 @@ class Receptionist(Agent):
                 they have more than one appointment that day.
         """
         if not self._confirmed(context, "reschedule_appointment"):
-            return f"NOT RESCHEDULED: {CONFIRM_FIRST}"
+            return self._log_tool(
+                "reschedule_appointment", f"NOT RESCHEDULED: {CONFIRM_FIRST}"
+            )
         logger.info("TOOL reschedule_appointment(%s, %s %s -> %s %s)",
                     phone, current_date, current_time, new_date, new_time)
         result = await self.scheduler.reschedule(
             phone, current_date, new_date, new_time, current_time
         )
-        logger.info("TOOL result: %s", result)
-        return result
+        return self._log_tool("reschedule_appointment", result)
 
     async def on_enter(self) -> None:
         # Fixed greeting = predictable and fast (no LLM round-trip on pickup).
@@ -280,11 +287,14 @@ def attach_silence_handling(session: AgentSession) -> None:
                 hang_up(
                     session,
                     "It seems we've lost the connection. Please call us back anytime. Goodbye!",
+                    reason="silence_timeout",
                 )
 
 
-def attach_logging_and_latency(session: AgentSession, room_name: str) -> None:
+def attach_call_tracking(session: AgentSession, record: CallRecord) -> None:
+    """Log the conversation, measure latency per turn, and save one record per call."""
     tracker = LatencyTracker()
+    session._receptionist_record = record
 
     @session.on("agent_state_changed")
     def _on_state(ev) -> None:
@@ -300,46 +310,61 @@ def attach_logging_and_latency(session: AgentSession, room_name: str) -> None:
         item = ev.item
         role = getattr(item, "role", None)
         metrics = dict(getattr(item, "metrics", None) or {})
+        text = getattr(item, "text_content", "") or ""
         if role == "user":
+            record.say("CALLER", text)
             tracker.on_user_message(metrics)
         elif role == "assistant":
             interrupted = bool(getattr(item, "interrupted", False))
             marker = "  [interrupted by caller]" if interrupted else ""
-            logger.info("%s: %s%s", persona.name.upper(), getattr(item, "text_content", ""), marker)
+            logger.info("%s: %s%s", persona.name.upper(), text, marker)
+            record.say(persona.name.upper(), text + marker)
             turn = tracker.on_assistant_message(metrics, interrupted=interrupted)
             if turn:
                 logger.info("LATENCY %s", turn.describe())
 
+    @session.on("error")
+    def _on_error(ev) -> None:
+        err = getattr(ev, "error", None)
+        recoverable = getattr(err, "recoverable", True)
+        record.error(f"{type(err).__name__}: {err}"[:300])
+        if not recoverable:
+            record.end("error")
+
     @session.on("close")
     def _on_close(ev) -> None:
+        if getattr(ev, "error", None):
+            record.error(str(ev.error)[:300])
+            record.end("error")
+        reason = getattr(ev, "reason", "unknown")
+        record.end(str(getattr(reason, "value", reason)))  # keeps an earlier reason if set
         summary = tracker.summary()
-        logger.info("call ended (reason=%s)", getattr(ev, "reason", "unknown"))
+        data = record.to_dict(summary, tracker.to_records(), _config_snapshot())
+        logger.info("call ended: %s (%s) after %.0fs", data["outcome"], data["reason"],
+                    data["duration_s"])
         logger.info("LATENCY SUMMARY %s", summary)
-        _save_latency(room_name, summary, tracker.to_records())
+        _save_call(data)
 
 
-def _save_latency(room_name: str, summary: dict, turns: list[dict]) -> None:
-    """Append one line per call to logs/latency.jsonl (used for Day 6 metrics)."""
+def _config_snapshot() -> dict:
+    return {
+        "stt": settings.stt_provider,
+        "llm": settings.groq_model if settings.llm_provider == "groq" else settings.llm_model,
+        "tts": settings.elevenlabs_model if settings.tts_provider == "elevenlabs"
+        else settings.tts_model,
+        "calendar": settings.calendar_provider,
+        "endpointing": [settings.min_endpointing_delay, settings.max_endpointing_delay],
+    }
+
+
+def _save_call(data: dict) -> None:
+    """Append one line per call to logs/calls.jsonl (read by scripts/metrics_report.py)."""
     try:
         LOG_DIR.mkdir(exist_ok=True)
-        record = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "room": room_name,
-            "stt": settings.stt_provider,
-            "llm": settings.groq_model if settings.llm_provider == "groq" else settings.llm_model,
-            "tts": (
-                settings.elevenlabs_model
-                if settings.tts_provider == "elevenlabs"
-                else settings.tts_model
-            ),
-            "endpointing": [settings.min_endpointing_delay, settings.max_endpointing_delay],
-            "summary": summary,
-            "turns": turns,
-        }
-        with Path(LOG_DIR / "latency.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record) + "\n")
+        with Path(LOG_DIR / "calls.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(data) + "\n")
     except OSError as e:
-        logger.warning("could not save latency log: %s", e)
+        logger.warning("could not save call record: %s", e)
 
 
 server = AgentServer()
@@ -351,7 +376,8 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("incoming session in room %s", ctx.room.name)
 
     session = build_session()
-    attach_logging_and_latency(session, ctx.room.name)
+    record = CallRecord(room=ctx.room.name)
+    attach_call_tracking(session, record)
     attach_silence_handling(session)
 
     @session.on("close")
@@ -366,5 +392,7 @@ async def entrypoint(ctx: JobContext) -> None:
         ctx.add_shutdown_callback(_delete_room)
         ctx.shutdown(reason="call ended")
 
-    await session.start(agent=Receptionist(), room=ctx.room)
+    agent = Receptionist()
+    agent.record = record
+    await session.start(agent=agent, room=ctx.room)
     await ctx.connect()

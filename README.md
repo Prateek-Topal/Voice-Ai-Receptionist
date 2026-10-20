@@ -2,7 +2,7 @@
 
 An AI voice receptionist that answers phone calls, understands what the caller wants, talks naturally, and books appointments on Google Calendar. Built for clinics, coaching centres, dealerships, and small or one-person businesses.
 
-> **Status:** Day 5 of 7 — Books, cancels and reschedules appointments in Google Calendar, handles unclear and incomplete answers, and is tested with an automated conversation suite.
+> **Status:** Day 6 of 7 — Books, cancels and reschedules in Google Calendar; every call is measured (latency, outcome, failures) and reported in [`docs/metrics.md`](docs/metrics.md).
 
 ## How it works
 
@@ -39,6 +39,8 @@ voice-ai-receptionist/
 │   ├── calendar_client.py     # Google Calendar + in-memory calendar
 │   ├── call_control.py        # Goodbye + "yes" detection
 │   ├── evals.py               # Automated conversation test scenarios
+│   ├── call_record.py         # Per-call outcome + masked transcript
+│   ├── metrics.py             # Aggregates calls + evals into the report
 │   └── reply_guard.py         # One question per turn
 ├── config/business.yaml       # The business: name, hours, services, policies
 ├── scripts/
@@ -46,6 +48,7 @@ voice-ai-receptionist/
 │   ├── chat.py                # Text-chat with Aria (no voice)
 │   ├── check_calendar.py      # Test the Google Calendar connection
 │   ├── run_evals.py           # Run the conversation test suite against the real LLM
+│   ├── metrics_report.py      # Build docs/metrics.md from logs
 │   └── diagnose_livekit.py    # Test LiveKit credentials
 ├── tests/                     # pytest unit tests
 └── docs/                      # Architecture + daily progress log
@@ -136,9 +139,25 @@ Edit `config/business.yaml` — name, hours, services, policies, receptionist na
 - [x] Day 3 — ElevenLabs TTS, pauses, interruptions, silence handling, end-call
 - [x] Day 4 — Google Calendar: check slots, book, confirm, alternatives for taken slots
 - [x] Day 5 — Cancel, reschedule, unclear/incomplete answers, automated conversation tests
-- [ ] Day 6 — Metrics: latency, task completion, booking success
+- [x] Day 6 — Metrics: latency, task completion, bookings, failed conversations
 - [ ] Day 7 — Deploy, phone number, demo video
 
 ## Metrics
 
-Every call logs per-turn latency (`LATENCY turn N: TOTAL …`) and appends a summary to `logs/latency.jsonl`. Full metrics dashboard on Day 6.
+Every call is recorded in `logs/calls.jsonl` (phone numbers masked): per-turn latency, tools used, how the call
+ended, and an outcome — `booked`, `cancelled`, `rescheduled`, `info_only`, `incomplete` or `failed` (with the reason).
+
+```bash
+python scripts/run_evals.py --repeat 3     # automated task-completion rate (33 scripted conversations)
+python scripts/metrics_report.py           # writes docs/metrics.md
+python scripts/metrics_report.py --failed  # + transcripts of failed calls
+```
+
+| Metric | How it's measured |
+|---|---|
+| Response latency (p50 / p95) | Caller stops speaking → Aria's audio starts, every turn of every real call |
+| Task completion | Evals: scripted callers vs the real agent, pass only if the calendar ends in the right state. Real calls: share of booking/cancel/move attempts the tool confirmed |
+| Successful bookings | Calls where `book_appointment` returned BOOKED |
+| Failed conversations | Errors, dead lines, or tasks started but never completed — with transcripts for debugging |
+
+Latest numbers: see [`docs/metrics.md`](docs/metrics.md).

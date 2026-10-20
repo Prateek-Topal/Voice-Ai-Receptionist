@@ -78,3 +78,12 @@ Latency (Day 2 → Day 3):
 - [x] Automated conversation tests: 11 scripted scenarios run against the real agent + LLM, checking calendar
       outcomes (`scripts/run_evals.py`); harness itself tested offline with a scripted fake LLM (110 unit tests)
 - [ ] Eval results: _fill in pass rate from run_evals.py_
+
+## Day 6 — Evaluation
+- [x] Every call recorded in `logs/calls.jsonl`: outcome (booked / cancelled / rescheduled / info_only /
+      incomplete / failed + reason), end reason, tools and results, errors, per-turn latency, masked transcript
+- [x] Response latency: p50 / p90 / p95 / max, % under 1 / 1.5 / 2 s, and the endpointing / LLM / TTS breakdown
+- [x] Task completion: automated evals (`run_evals.py --repeat N` for an honest rate) + real calls
+- [x] Successful bookings, cancellations, reschedules counted from tool results (not from what the LLM said)
+- [x] Failed conversations listed by reason, with transcripts (`metrics_report.py --failed`)
+- [x] `docs/metrics.md` generated for the README (119 unit tests)

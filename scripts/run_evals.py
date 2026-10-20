@@ -39,9 +39,12 @@ def main() -> int:
     ap.add_argument("--delay", type=float, default=20, help="seconds between scenarios")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--show", action="store_true", help="print all transcripts")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="run each scenario N times (LLMs vary; gives an honest pass rate)")
     args = ap.parse_args()
 
     chosen = [s for s in SCENARIOS if not args.only or args.only in (s.name, s.category)]
+    chosen = chosen * max(1, args.repeat)
     if args.list or not chosen:
         for s in SCENARIOS:
             print(f"  {s.name:<22} {s.category:<12} {s.description}")
@@ -58,7 +61,7 @@ def main() -> int:
                          phone_digits=int(persona.receptionist.get("phone_digits", 10)))
 
     model = settings.groq_model if settings.llm_provider == "groq" else settings.llm_model
-    print(f"Running {len(chosen)} scenario(s) with {model} "
+    print(f"Running {len(chosen)} conversation(s) with {model} "
           f"({args.delay:.0f}s pause between them)\n")
 
     async def run_all():
