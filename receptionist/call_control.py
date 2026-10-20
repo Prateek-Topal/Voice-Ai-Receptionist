@@ -56,7 +56,8 @@ def last_agent_text(history_items) -> str:
 _AFFIRMATIVE = re.compile(
     r"^\W*(yes|yeah|yep|yup|ya|haan|correct|that'?s (right|correct)|right|sure|ok|okay|"
     r"go ahead|please (book|go ahead|confirm)|book it|confirm|confirmed|perfect|"
-    r"absolutely|exactly|sounds good|all correct|that'?s it)\b",
+    r"absolutely|exactly|sounds good|all correct|that'?s it|do it|"
+    r"(please |go ahead and )?(cancel|move|reschedule|change) it)\b",
     re.IGNORECASE,
 )
 

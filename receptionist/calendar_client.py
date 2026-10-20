@@ -31,14 +31,28 @@ class BookedEvent:
     end: datetime
     summary: str
     link: str = ""
+    phone: str = ""
+    name: str = ""
+    service: str = ""
 
 
 class Calendar(Protocol):
     async def busy(self, start: datetime, end: datetime) -> list[Interval]: ...
 
     async def create(
-        self, start: datetime, end: datetime, summary: str, description: str, phone: str
+        self,
+        start: datetime,
+        end: datetime,
+        summary: str,
+        description: str,
+        phone: str,
+        name: str = "",
+        service: str = "",
     ) -> BookedEvent: ...
+
+    async def find(self, phone: str, start: datetime, end: datetime) -> list[BookedEvent]: ...
+
+    async def move(self, event_id: str, start: datetime, end: datetime) -> None: ...
 
     async def delete(self, event_id: str) -> None: ...
 
@@ -60,10 +74,30 @@ class MemoryCalendar:
         spans = [Interval(e.start, e.end) for e in self.events]
         return [span for span in spans if span.overlaps(window)]
 
-    async def create(self, start, end, summary, description, phone) -> BookedEvent:
-        event = BookedEvent(id=f"mem-{next(self._ids)}", start=start, end=end, summary=summary)
+    async def create(
+        self, start, end, summary, description, phone, name="", service=""
+    ) -> BookedEvent:
+        event = BookedEvent(
+            id=f"mem-{next(self._ids)}", start=start, end=end, summary=summary,
+            phone=phone, name=name, service=service,
+        )
         self.events.append(event)
         return event
+
+    async def find(self, phone: str, start: datetime, end: datetime) -> list[BookedEvent]:
+        window = Interval(start, end)
+        hits = [
+            e for e in self.events
+            if e.phone == phone and Interval(e.start, e.end).overlaps(window)
+        ]
+        return sorted(hits, key=lambda e: e.start)
+
+    async def move(self, event_id: str, start: datetime, end: datetime) -> None:
+        for e in self.events:
+            if e.id == event_id:
+                e.start, e.end = start, end
+                return
+        raise CalendarError(f"event {event_id} not found")
 
     async def delete(self, event_id: str) -> None:
         self.events = [e for e in self.events if e.id != event_id]
@@ -114,19 +148,68 @@ class GoogleCalendar:
             for b in cal.get("busy", [])
         ]
 
-    def _create_sync(self, start, end, summary, description, phone) -> BookedEvent:
+    def _create_sync(self, start, end, summary, description, phone, name, service) -> BookedEvent:
         body = {
             "summary": summary,
             "description": description,
             "start": {"dateTime": start.isoformat(), "timeZone": self.timezone},
             "end": {"dateTime": end.isoformat(), "timeZone": self.timezone},
-            # Searchable later (Day 5: cancel / reschedule by phone number).
-            "extendedProperties": {"private": {"phone": phone, "source": "aria"}},
+            # Private, searchable fields: cancel / reschedule look bookings up by phone.
+            "extendedProperties": {
+                "private": {"phone": phone, "name": name, "service": service, "source": "aria"}
+            },
         }
         ev = self._svc().events().insert(calendarId=self.calendar_id, body=body).execute()
         return BookedEvent(
-            id=ev["id"], start=start, end=end, summary=summary, link=ev.get("htmlLink", "")
+            id=ev["id"], start=start, end=end, summary=summary, link=ev.get("htmlLink", ""),
+            phone=phone, name=name, service=service,
         )
+
+    def _find_sync(self, phone: str, start: datetime, end: datetime) -> list[BookedEvent]:
+        resp = (
+            self._svc()
+            .events()
+            .list(
+                calendarId=self.calendar_id,
+                privateExtendedProperty=f"phone={phone}",
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+                maxResults=20,
+            )
+            .execute()
+        )
+        events = []
+        for item in resp.get("items", []):
+            if "dateTime" not in item.get("start", {}):
+                continue  # skip all-day events
+            props = item.get("extendedProperties", {}).get("private", {})
+            summary = item.get("summary", "")
+            # Day 4 bookings stored only the phone; recover service/name from "Service – Name".
+            svc_part, _, name_part = summary.partition(" – ")
+            events.append(
+                BookedEvent(
+                    id=item["id"],
+                    start=datetime.fromisoformat(item["start"]["dateTime"]),
+                    end=datetime.fromisoformat(item["end"]["dateTime"]),
+                    summary=summary,
+                    link=item.get("htmlLink", ""),
+                    phone=props.get("phone", phone),
+                    name=props.get("name") or name_part,
+                    service=props.get("service") or svc_part,
+                )
+            )
+        return events
+
+    def _move_sync(self, event_id: str, start: datetime, end: datetime) -> None:
+        body = {
+            "start": {"dateTime": start.isoformat(), "timeZone": self.timezone},
+            "end": {"dateTime": end.isoformat(), "timeZone": self.timezone},
+        }
+        self._svc().events().patch(
+            calendarId=self.calendar_id, eventId=event_id, body=body
+        ).execute()
 
     def _delete_sync(self, event_id: str) -> None:
         self._svc().events().delete(calendarId=self.calendar_id, eventId=event_id).execute()
@@ -136,8 +219,18 @@ class GoogleCalendar:
     async def busy(self, start: datetime, end: datetime) -> list[Interval]:
         return await self._call(self._busy_sync, start, end)
 
-    async def create(self, start, end, summary, description, phone) -> BookedEvent:
-        return await self._call(self._create_sync, start, end, summary, description, phone)
+    async def create(
+        self, start, end, summary, description, phone, name="", service=""
+    ) -> BookedEvent:
+        return await self._call(
+            self._create_sync, start, end, summary, description, phone, name, service
+        )
+
+    async def find(self, phone: str, start: datetime, end: datetime) -> list[BookedEvent]:
+        return await self._call(self._find_sync, phone, start, end)
+
+    async def move(self, event_id: str, start: datetime, end: datetime) -> None:
+        await self._call(self._move_sync, event_id, start, end)
 
     async def delete(self, event_id: str) -> None:
         await self._call(self._delete_sync, event_id)

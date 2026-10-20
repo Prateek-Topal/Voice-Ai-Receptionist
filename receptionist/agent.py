@@ -74,11 +74,25 @@ def hang_up(session: AgentSession, farewell: str) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+CONFIRM_FIRST = (
+    "the caller has not confirmed yet. Read back what will change and ask if it's correct."
+)
+
+
 class Receptionist(Agent):
-    def __init__(self) -> None:
-        # Tools: check_availability + book_appointment (below). No end-call tool:
+    def __init__(self, booking_scheduler=None, greet: bool = True) -> None:
+        # Tools below: availability, booking, lookup, cancel, reschedule. No end-call tool:
         # the LLM can't hang up, on_user_turn_completed decides that.
+        self.scheduler = booking_scheduler or scheduler
+        self._greet = greet
         super().__init__(instructions=persona.instructions(BOOKING_CAPABILITIES))
+
+    def _confirmed(self, context: RunContext, tool: str) -> bool:
+        said = last_user_text(context.session.history.items)
+        if is_affirmative(said):
+            return True
+        logger.info("TOOL %s BLOCKED: caller hasn't confirmed (last: %r)", tool, said)
+        return False
 
     @function_tool
     async def check_availability(
@@ -100,7 +114,7 @@ class Receptionist(Agent):
         """
         logger.info("TOOL check_availability(date=%s, service=%s, time=%s)",
                     date, service, preferred_time)
-        result = await scheduler.check_availability(date, service, preferred_time)
+        result = await self.scheduler.check_availability(date, service, preferred_time)
         logger.info("TOOL result: %s", result)
         return result
 
@@ -126,21 +140,83 @@ class Receptionist(Agent):
             date: The day in YYYY-MM-DD format.
             time: The start time as 24-hour HH:MM, one of the free times you offered.
         """
-        said = last_user_text(context.session.history.items)
-        if not is_affirmative(said):
-            logger.info("TOOL book_appointment BLOCKED: caller hasn't confirmed (last: %r)", said)
-            return (
-                "NOT BOOKED: the caller has not confirmed yet. Read back the service, day, "
-                "time, name and phone number, and ask if it's correct."
-            )
+        if not self._confirmed(context, "book_appointment"):
+            return f"NOT BOOKED: {CONFIRM_FIRST}"
         logger.info("TOOL book_appointment(%s, %s, %s, %s %s)", name, phone, service, date, time)
-        result = await scheduler.book(name, phone, service, date, time)
+        result = await self.scheduler.book(name, phone, service, date, time)
+        logger.info("TOOL result: %s", result)
+        return result
+
+    @function_tool
+    async def find_booking(self, context: RunContext, phone: str) -> str:
+        """Find the caller's upcoming appointments by the phone number they booked with.
+
+        Args:
+            phone: The phone number the appointment was booked with, digits only.
+        """
+        logger.info("TOOL find_booking(%s)", phone)
+        result = await self.scheduler.find_bookings(phone)
+        logger.info("TOOL result: %s", result)
+        return result
+
+    @function_tool
+    async def cancel_appointment(
+        self, context: RunContext, phone: str, date: str, time: str | None = None
+    ) -> str:
+        """Cancel the caller's appointment.
+
+        Only call this after find_booking, and after the caller clearly said yes to cancelling.
+
+        Args:
+            phone: The phone number the appointment was booked with, digits only.
+            date: The appointment's day in YYYY-MM-DD format.
+            time: The appointment's start time as 24-hour HH:MM. Needed only if they have
+                more than one appointment that day.
+        """
+        if not self._confirmed(context, "cancel_appointment"):
+            return f"NOT CANCELLED: {CONFIRM_FIRST}"
+        logger.info("TOOL cancel_appointment(%s, %s %s)", phone, date, time)
+        result = await self.scheduler.cancel(phone, date, time)
+        logger.info("TOOL result: %s", result)
+        return result
+
+    @function_tool
+    async def reschedule_appointment(
+        self,
+        context: RunContext,
+        phone: str,
+        current_date: str,
+        new_date: str,
+        new_time: str,
+        current_time: str | None = None,
+    ) -> str:
+        """Move the caller's appointment to a new day and time.
+
+        Only call this after find_booking and check_availability, and after the caller
+        clearly said yes to the change.
+
+        Args:
+            phone: The phone number the appointment was booked with, digits only.
+            current_date: The day of the existing appointment, YYYY-MM-DD.
+            new_date: The new day, YYYY-MM-DD.
+            new_time: The new start time as 24-hour HH:MM, one of the free times you offered.
+            current_time: The existing appointment's time as 24-hour HH:MM. Needed only if
+                they have more than one appointment that day.
+        """
+        if not self._confirmed(context, "reschedule_appointment"):
+            return f"NOT RESCHEDULED: {CONFIRM_FIRST}"
+        logger.info("TOOL reschedule_appointment(%s, %s %s -> %s %s)",
+                    phone, current_date, current_time, new_date, new_time)
+        result = await self.scheduler.reschedule(
+            phone, current_date, new_date, new_time, current_time
+        )
         logger.info("TOOL result: %s", result)
         return result
 
     async def on_enter(self) -> None:
         # Fixed greeting = predictable and fast (no LLM round-trip on pickup).
-        self.session.say(persona.greeting)
+        if self._greet:
+            self.session.say(persona.greeting)
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         """Stream the LLM reply, but stop after the first question (one question per turn)."""

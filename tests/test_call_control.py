@@ -67,3 +67,10 @@ def test_not_affirmative(text):
     from receptionist.call_control import is_affirmative
 
     assert not is_affirmative(text)
+
+
+@pytest.mark.parametrize("text", ["Yes, cancel it.", "Please cancel it", "Go ahead and move it"])
+def test_affirmative_for_changes(text):
+    from receptionist.call_control import is_affirmative
+
+    assert is_affirmative(text)

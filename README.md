@@ -2,7 +2,7 @@
 
 An AI voice receptionist that answers phone calls, understands what the caller wants, talks naturally, and books appointments on Google Calendar. Built for clinics, coaching centres, dealerships, and small or one-person businesses.
 
-> **Status:** Day 4 of 7 — Aria checks real availability and books appointments in Google Calendar during the call, with every booking validated in code.
+> **Status:** Day 5 of 7 — Books, cancels and reschedules appointments in Google Calendar, handles unclear and incomplete answers, and is tested with an automated conversation suite.
 
 ## How it works
 
@@ -38,12 +38,14 @@ voice-ai-receptionist/
 │   ├── scheduler.py           # check_availability / book logic used by the tools
 │   ├── calendar_client.py     # Google Calendar + in-memory calendar
 │   ├── call_control.py        # Goodbye + "yes" detection
+│   ├── evals.py               # Automated conversation test scenarios
 │   └── reply_guard.py         # One question per turn
 ├── config/business.yaml       # The business: name, hours, services, policies
 ├── scripts/
 │   ├── check_env.py           # Pre-flight setup check
 │   ├── chat.py                # Text-chat with Aria (no voice)
 │   ├── check_calendar.py      # Test the Google Calendar connection
+│   ├── run_evals.py           # Run the conversation test suite against the real LLM
 │   └── diagnose_livekit.py    # Test LiveKit credentials
 ├── tests/                     # pytest unit tests
 └── docs/                      # Architecture + daily progress log
@@ -86,7 +88,18 @@ No Google setup? Set `CALENDAR_PROVIDER=memory` to run with a fake in-memory cal
 The LLM proposes, the code decides. Every tool call is validated in Python before it touches the calendar:
 no past times, no closed days, only within opening hours and the booking horizon, the service must exist and
 fit before closing, the phone number must have 10 digits, the slot is re-checked under a lock right before
-writing (no double-booking), and `book_appointment` refuses to run until the caller's last reply was a clear "yes".
+writing (no double-booking), and `book_appointment`, `cancel_appointment` and `reschedule_appointment` refuse to
+run until the caller's last reply was a clear "yes". Bookings are found by the phone number they were made with,
+so a caller can only change their own appointments.
+
+## Conversation tests (evals)
+
+`python scripts/run_evals.py` plays 11 scripted callers against the real agent and LLM on an
+in-memory calendar, then checks the outcome (booked / cancelled / moved / correctly refused):
+happy-path booking, taken slot, change of mind, incomplete request, short phone number,
+no confirmation, closed day, unknown service, cancel, cancel with the wrong number, reschedule.
+Results are appended to `logs/evals.jsonl`. `pytest` also runs the harness offline with a
+scripted fake LLM, so the tool wiring and guards are tested without network access.
 
 ## Run
 
@@ -122,7 +135,7 @@ Edit `config/business.yaml` — name, hours, services, policies, receptionist na
 - [x] Day 2 — Deepgram STT + Groq LLM, latency tracking
 - [x] Day 3 — ElevenLabs TTS, pauses, interruptions, silence handling, end-call
 - [x] Day 4 — Google Calendar: check slots, book, confirm, alternatives for taken slots
-- [ ] Day 5 — Cancellations, rescheduling, edge cases
+- [x] Day 5 — Cancel, reschedule, unclear/incomplete answers, automated conversation tests
 - [ ] Day 6 — Metrics: latency, task completion, booking success
 - [ ] Day 7 — Deploy, phone number, demo video
 

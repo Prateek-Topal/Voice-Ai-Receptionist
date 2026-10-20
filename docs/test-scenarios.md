@@ -72,3 +72,17 @@ Keep calendar.google.com open to watch events appear.
 | | 17 | | |
 | | 18 | | |
 | | 19 | | |
+
+
+# Day 5 — changes and reliability (voice)
+
+Automated first: `python scripts/run_evals.py` (11 scenarios, text only). Then by voice:
+
+| # | Scenario | What you say | Aria should… |
+|---|---|---|---|
+| 20 | Cancel | Book something, hang up, call again: "I need to cancel my appointment" → number → "Yes, cancel it" | Find it, read it back, cancel after yes. Event disappears from Google Calendar. |
+| 21 | Reschedule | "I want to move my appointment" → number → new day/time → "Yes" | Check the new time, read back old → new, move after yes. Event moves in Google Calendar. |
+| 22 | Wrong number | Cancel with a number that has no booking | Read the number back, say nothing was found. Nothing deleted. |
+| 23 | Mumble | Mumble the service name | "Sorry, did you say …?" instead of guessing. |
+| 24 | Partial info | "Book me something on Friday" | Ask only for the missing part (which service). |
+| 25 | Change of mind | Pick 11, then "actually 3 PM" | Re-check 3 PM before continuing. |

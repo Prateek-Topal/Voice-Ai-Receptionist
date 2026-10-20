@@ -67,3 +67,14 @@ Latency (Day 2 → Day 3):
 - [x] Guardrails in code: past/closed/out-of-hours/too-far/unknown service/short phone/double booking (93 tests)
 - [x] Model switched to gpt-oss-120b for more reliable tool calling
 - [ ] Voice test scenarios 13–19 — fill in results
+
+## Day 5 — Agent reliability
+- [x] Cancel: `find_booking` (by phone) → confirm → `cancel_appointment`, guarded by "yes"
+- [x] Reschedule: find → check availability → confirm → `reschedule_appointment`; own slot excluded from busy time
+      so moving an appointment 30 minutes later works, Google `events.patch` keeps the same event
+- [x] Wrong number / no booking / several bookings on one day: clear tool results, nothing changed
+- [x] Misunderstandings & incomplete info: prompt rules (ask only for what's missing, re-ask in other words,
+      "did you say …?" for likely mishearings, follow the latest answer, offer a call back after two tries)
+- [x] Automated conversation tests: 11 scripted scenarios run against the real agent + LLM, checking calendar
+      outcomes (`scripts/run_evals.py`); harness itself tested offline with a scripted fake LLM (110 unit tests)
+- [ ] Eval results: _fill in pass rate from run_evals.py_

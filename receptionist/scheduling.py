@@ -169,6 +169,24 @@ class Rules:
         return slots
 
 
+def subtract(busy: list[Interval], own: Interval) -> list[Interval]:
+    """Busy time minus one booking, so a reschedule doesn't collide with itself.
+
+    Google's freebusy merges back-to-back events, so the booking is cut out of whichever
+    busy blocks contain it rather than removed as a whole block.
+    """
+    out = []
+    for b in busy:
+        if not b.overlaps(own):
+            out.append(b)
+            continue
+        if b.start < own.start:
+            out.append(Interval(b.start, own.start))
+        if own.end < b.end:
+            out.append(Interval(own.end, b.end))
+    return out
+
+
 def nearest(slots: list[datetime], target: datetime, n: int = 3) -> list[datetime]:
     """The n free slots closest to what the caller asked for, in time order."""
     return sorted(sorted(slots, key=lambda s: abs((s - target).total_seconds()))[:n])

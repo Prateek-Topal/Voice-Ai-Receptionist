@@ -11,7 +11,7 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta
 
-from receptionist.calendar_client import Calendar, CalendarError
+from receptionist.calendar_client import BookedEvent, Calendar, CalendarError
 from receptionist.scheduling import (
     Interval,
     Rules,
@@ -26,6 +26,7 @@ from receptionist.scheduling import (
     parse_date,
     parse_time,
     spread,
+    subtract,
 )
 
 logger = logging.getLogger("receptionist.scheduler")
@@ -134,7 +135,9 @@ class Scheduler:
                 f"Booked by Aria (AI receptionist) on {self.now():%d %b %Y %H:%M}."
             )
             try:
-                event = await self.calendar.create(start, end, summary, description, number)
+                event = await self.calendar.create(
+                    start, end, summary, description, number, name.strip(), service.name
+                )
             except CalendarError as e:
                 logger.error("calendar error while booking: %s", e)
                 return CALENDAR_DOWN.replace("ERROR:", "NOT BOOKED:")
@@ -143,6 +146,117 @@ class Scheduler:
         return (
             f"BOOKED: {service.name} for {name.strip()} on {fmt_day(day)} at {fmt_time(start)}, "
             f"phone ending {number[-4:]}. Tell the caller it is confirmed."
+        )
+
+
+    # ------------------------------------------------------------ Day 5: changes
+
+    def _describe(self, ev: BookedEvent) -> str:
+        what = ev.service or ev.summary
+        who = f" for {ev.name}" if ev.name else ""
+        return f"{what}{who} on {fmt_day(ev.start.date())} at {fmt_time(ev.start)}"
+
+    async def _upcoming(self, number: str) -> list[BookedEvent]:
+        now = self.now()
+        return await self.calendar.find(number, now, now + self.rules.horizon + timedelta(days=60))
+
+    async def _locate(self, number: str, date_text: str, time_text: str | None) -> BookedEvent:
+        """The caller's booking on that day (and time, if several). Raises SchedulingError."""
+        day = parse_date(date_text)
+        events = [e for e in await self._upcoming(number) if e.start.date() == day]
+        if time_text:
+            wanted = parse_time(time_text)
+            events = [e for e in events if e.start.time().replace(tzinfo=None) == wanted]
+        if not events:
+            raise SchedulingError(
+                f"No appointment found on {fmt_day(day)} for the number ending {number[-4:]}. "
+                "Use find_booking to see the caller's appointments."
+            )
+        if len(events) > 1:
+            times = fmt_times([e.start for e in events])
+            raise SchedulingError(f"Several appointments that day ({times}). Ask which one.")
+        return events[0]
+
+    async def find_bookings(self, phone: str) -> str:
+        try:
+            number = normalize_phone(phone, self.phone_digits)
+            events = await self._upcoming(number)
+        except SchedulingError as e:
+            return f"NOT FOUND: {e}"
+        except CalendarError as e:
+            logger.error("calendar error during lookup: %s", e)
+            return CALENDAR_DOWN
+        logger.info("lookup %s: %d upcoming", number[-4:], len(events))
+        if not events:
+            return (
+                f"NOT FOUND: no upcoming appointments for the number ending {number[-4:]}. "
+                "Read the number back to check it, or ask if they booked with another number."
+            )
+        listed = "; ".join(self._describe(e) for e in events[:5])
+        return f"FOUND: {len(events)} upcoming appointment(s): {listed}."
+
+    async def cancel(self, phone: str, date_text: str, time_text: str | None = None) -> str:
+        try:
+            number = normalize_phone(phone, self.phone_digits)
+            async with self._lock:
+                event = await self._locate(number, date_text, time_text)
+                await self.calendar.delete(event.id)
+        except SchedulingError as e:
+            return f"NOT CANCELLED: {e}"
+        except CalendarError as e:
+            logger.error("calendar error while cancelling: %s", e)
+            return CALENDAR_DOWN.replace("ERROR:", "NOT CANCELLED:")
+        logger.info("CANCELLED %s (event %s)", self._describe(event), event.id)
+        return f"CANCELLED: {self._describe(event)}. Tell the caller it is cancelled."
+
+    async def reschedule(
+        self,
+        phone: str,
+        current_date: str,
+        new_date: str,
+        new_time: str,
+        current_time: str | None = None,
+    ) -> str:
+        try:
+            number = normalize_phone(phone, self.phone_digits)
+            day = parse_date(new_date)
+            start = datetime.combine(day, parse_time(new_time), tzinfo=self.rules.tz)
+        except SchedulingError as e:
+            return f"NOT RESCHEDULED: {e}"
+
+        async with self._lock:
+            try:
+                event = await self._locate(number, current_date, current_time)
+                service = match_service(event.service or event.summary, self.services)
+                opens, closes = self.rules.check_day(day, self.now())
+                busy = await self.calendar.busy(opens, closes)
+                busy = subtract(busy, Interval(event.start, event.end))  # ignore its own slot
+                slots = self.rules.free_slots(day, service.duration, busy, self.now())
+            except SchedulingError as e:
+                return f"NOT RESCHEDULED: {e}"
+            except CalendarError as e:
+                logger.error("calendar error before rescheduling: %s", e)
+                return CALENDAR_DOWN.replace("ERROR:", "NOT RESCHEDULED:")
+
+            if start == event.start:
+                return f"NOT RESCHEDULED: the appointment is already at {fmt_time(start)} then."
+            if start not in slots:
+                options = fmt_times(nearest(slots, start)) if slots else "none that day"
+                return (
+                    f"NOT RESCHEDULED: {fmt_time(start)} on {fmt_day(day)} is not available. "
+                    f"Closest free times: {options}."
+                )
+            old = self._describe(event)
+            try:
+                await self.calendar.move(event.id, start, start + service.duration)
+            except CalendarError as e:
+                logger.error("calendar error while rescheduling: %s", e)
+                return CALENDAR_DOWN.replace("ERROR:", "NOT RESCHEDULED:")
+
+        logger.info("RESCHEDULED %s -> %s", old, start.isoformat())
+        return (
+            f"RESCHEDULED: {service.name} moved from {old.split(' on ', 1)[-1]} to "
+            f"{fmt_day(day)} at {fmt_time(start)}. Tell the caller the new time."
         )
 
 
