@@ -1,0 +1,31 @@
+# Secrets: never in the image (injected at runtime by LiveKit Cloud)
+.env
+.env.*
+credentials/
+*service-account*.json
+
+# Not needed at runtime
+tests/
+docs/
+logs/
+deploy/
+scripts/
+README.md
+
+# Python artifacts / environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# VCS / editor / OS
+.git
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.idea/
+.DS_Store

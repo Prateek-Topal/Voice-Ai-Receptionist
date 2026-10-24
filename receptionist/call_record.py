@@ -92,6 +92,8 @@ class CallRecord:
             return "failed", self.errors[-1] if self.errors else "session error"
         if self.end_reason == "silence_timeout":
             return "failed", "caller went silent and the call was ended"
+        if self.end_reason == "time_limit":
+            return "failed", "call hit the time limit"
         if any(t.status == "ERROR" for t in self.tools):
             return "failed", "calendar unavailable"
         if self.had_intent:

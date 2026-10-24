@@ -1,7 +1,8 @@
-livekit-agents[deepgram,groq,elevenlabs]>=1.8,<2
-openai>=1.40
-python-dotenv>=1.0
-PyYAML>=6.0
+# Pinned to the versions this project was tested with (deploys must be reproducible).
+livekit-agents[deepgram,groq,elevenlabs]==1.8.6
+openai>=1.40,<3
+python-dotenv>=1.0,<2
+PyYAML>=6.0,<7
 tzdata>=2024.1
-google-api-python-client>=2.100
-google-auth>=2.20
+google-api-python-client>=2.100,<3
+google-auth>=2.20,<3

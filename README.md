@@ -1,163 +1,163 @@
-# 📞 Voice AI Receptionist
+# 📞 Aria — AI Voice Receptionist
 
-An AI voice receptionist that answers phone calls, understands what the caller wants, talks naturally, and books appointments on Google Calendar. Built for clinics, coaching centres, dealerships, and small or one-person businesses.
+A real-time voice agent that answers calls for a small business, understands what the caller wants,
+and **books, cancels and reschedules appointments in Google Calendar** while they're on the line.
 
-> **Status:** Day 6 of 7 — Books, cancels and reschedules in Google Calendar; every call is measured (latency, outcome, failures) and reported in [`docs/metrics.md`](docs/metrics.md).
+**[▶ Demo video](https://youtu.be/REPLACE)** · **[🌐 Talk to Aria in your browser](https://REPLACE.vercel.app)** · **📞 +1 (REPLACE) — call her**
 
-## How it works
+> Built in 7 days as a portfolio project. The demo is configured as *Sunrise Dental Clinic*;
+> switching to a coaching centre, salon or dealership is a single YAML file.
 
+## Results
+
+| Metric | Value |
+|---|---|
+| Median response latency (caller stops → Aria speaks) | **REPLACE s** (p95 REPLACE s) |
+| Task completion, automated conversation tests | **REPLACE %** over REPLACE conversations |
+| Unit tests | 123 passing |
+
+How these are measured, plus failed-conversation analysis: [`docs/metrics.md`](docs/metrics.md).
+
+## What Aria can do
+
+- **Answer** questions about hours, services, location and policies, from `config/business.yaml`
+- **Book** appointments: checks real free slots, collects name and number, reads back, books on "yes"
+- **Handle taken slots** by offering the three nearest free times
+- **Cancel and reschedule** by the phone number the booking was made with
+- **Talk naturally:** handles interruptions, mid-sentence pauses, silence ("are you still there?"),
+  mishearings ("sorry, did you say…?") and changes of mind
+- **Use caller ID** on phone calls: "Shall I use the number you're calling from?"
+- **Hang up politely** when the caller says goodbye
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C[📞 Caller<br/>phone or browser] <-->|audio| LK[LiveKit Cloud<br/>SIP + WebRTC]
+    LK --> STT[Deepgram Nova-3<br/>speech-to-text]
+    STT --> LLM[Groq gpt-oss-120b<br/>+ LiveKit Inference fallback]
+    LLM -->|tool calls| SCH[Scheduler<br/>validation in code]
+    SCH <--> GC[(Google Calendar)]
+    LLM --> TTS[ElevenLabs Flash v2.5<br/>text-to-speech]
+    TTS --> LK
 ```
-Caller ──► LiveKit (call/audio) ──► Speech-to-Text ──► LLM agent ──► Tools (Google Calendar)
-   ▲                                                       │
-   └──────────────── Text-to-Speech ◄──────────────────────┘
-```
 
-| Layer | Tech | Day |
-|---|---|---|
-| Call / audio pipeline | LiveKit Agents | 1 ✅ |
-| Speech-to-text | Deepgram Nova-3 | 2 ✅ |
-| Reasoning | Groq (gpt-oss-120b) + LiveKit Inference fallback | 2 ✅ |
-| Voice | ElevenLabs Flash v2.5 | 3 ✅ |
-| Booking | Google Calendar API (service account) | 4 ✅ |
+Booking sequence and component details: [`docs/architecture.md`](docs/architecture.md).
 
-See [`docs/architecture.md`](docs/architecture.md) for the detailed diagram.
+## Design decisions
+
+**The LLM proposes, the code decides.** Every tool call is validated in Python before it touches
+the calendar: opening hours, closed days, booking horizon, service duration, 10-digit phone numbers,
+and a lock plus re-check against double-booking. Booking, cancelling and rescheduling only run
+after the caller's last reply was a clear "yes".
+
+**Some decisions were taken away from the LLM.** Testing showed a small model calling the end-call
+tool right after the caller gave their name, and inventing a phone number by copying the prompt's
+examples. So hanging up is decided by code (goodbye detection), every reply is cut after its first
+question, and the prompt contains no example values to copy.
+
+**Latency is measured, not guessed.** Every turn is timed end-to-end and split into endpointing,
+LLM and TTS, which showed that most of the delay was the wait to be sure the caller had finished,
+not the model.
+
+**It degrades gracefully.** If Groq rate-limits, a fallback LLM answers. If Google Calendar is
+down, Aria apologises and takes a message. A time limit protects API credits on the public demo.
+
+**Logs mask phone numbers** (`******3210`).
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Voice pipeline, telephony, hosting | [LiveKit Agents](https://docs.livekit.io/agents/) 1.8 on LiveKit Cloud |
+| Speech-to-text | Deepgram Nova-3, with keyterms from the business config |
+| LLM | Groq `openai/gpt-oss-120b`, falling back to LiveKit Inference |
+| Text-to-speech | ElevenLabs Flash v2.5 |
+| Calendar | Google Calendar API (service account) |
+| Web demo | LiveKit `agent-starter-react` on Vercel |
 
 ## Project structure
 
 ```
-voice-ai-receptionist/
-├── main.py                    # Entry point: python main.py console | dev | start
+├── main.py                     # Entry point: console | dev | start
+├── Dockerfile                  # LiveKit Cloud image
+├── config/business.yaml        # The business: hours, services, policies, persona
 ├── receptionist/
-│   ├── agent.py               # LiveKit agent: session, logging, latency tracking
-│   ├── providers.py           # Builds STT / LLM / TTS from .env.local
-│   ├── latency.py             # Per-turn latency measurement
-│   ├── config.py              # Loads .env.local settings
-│   ├── persona.py             # Builds the LLM instructions from business.yaml
-│   ├── prompts/receptionist.md# Persona prompt template
-│   ├── scheduling.py          # Opening hours, free slots, booking rules (pure, unit-tested)
-│   ├── scheduler.py           # check_availability / book logic used by the tools
-│   ├── calendar_client.py     # Google Calendar + in-memory calendar
-│   ├── call_control.py        # Goodbye + "yes" detection
-│   ├── evals.py               # Automated conversation test scenarios
-│   ├── call_record.py         # Per-call outcome + masked transcript
-│   ├── metrics.py             # Aggregates calls + evals into the report
-│   └── reply_guard.py         # One question per turn
-├── config/business.yaml       # The business: name, hours, services, policies
-├── scripts/
-│   ├── check_env.py           # Pre-flight setup check
-│   ├── chat.py                # Text-chat with Aria (no voice)
-│   ├── check_calendar.py      # Test the Google Calendar connection
-│   ├── run_evals.py           # Run the conversation test suite against the real LLM
-│   ├── metrics_report.py      # Build docs/metrics.md from logs
-│   └── diagnose_livekit.py    # Test LiveKit credentials
-├── tests/                     # pytest unit tests
-└── docs/                      # Architecture + daily progress log
+│   ├── agent.py                # Agent: tools, guards, call tracking
+│   ├── providers.py            # STT / LLM / TTS / turn-taking / scheduler from config
+│   ├── prompts/receptionist.md # Persona prompt template
+│   ├── scheduling.py           # Hours, slots, validation (pure)
+│   ├── scheduler.py            # check / book / find / cancel / reschedule
+│   ├── calendar_client.py      # Google Calendar + in-memory calendar
+│   ├── call_control.py         # Goodbye + "yes" detection
+│   ├── reply_guard.py          # One question per turn
+│   ├── caller_id.py            # Phone caller's number
+│   ├── latency.py, call_record.py, metrics.py   # Measurement
+│   └── evals.py                # Automated conversation scenarios
+├── scripts/                    # check_env, check_calendar, chat, run_evals, metrics_report
+├── tests/                      # 123 unit tests (no network needed)
+├── deploy/                     # Dispatch rule, production secrets template
+└── docs/                       # Architecture, metrics, deployment, demo script, progress log
 ```
 
-## Setup
+## Run it locally
 
-**Requirements:** Python 3.10–3.14 (3.12 recommended), a free [LiveKit Cloud](https://cloud.livekit.io) account, a [Deepgram](https://deepgram.com) key, a [Groq](https://console.groq.com) key, an [ElevenLabs](https://elevenlabs.io) key, and your PC clock set to sync automatically.
+Requirements: Python 3.10–3.14 (3.12 recommended), with your PC clock set to sync automatically,
+plus free accounts at [LiveKit Cloud](https://cloud.livekit.io), [Deepgram](https://deepgram.com),
+[Groq](https://console.groq.com) and [ElevenLabs](https://elevenlabs.io), and a Google Cloud
+service account for the calendar ([setup](#google-calendar-setup)).
 
 ```bash
-git clone https://github.com/<your-username>/voice-ai-receptionist.git
-cd voice-ai-receptionist
-
+git clone https://github.com/<you>/<repo>.git && cd <repo>
 python -m venv .venv
-# Windows:      .venv\Scripts\activate
-# mac/Linux:    source .venv/bin/activate
-
+.venv\Scripts\activate              # mac/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
+copy .env.example .env.local         # mac/Linux: cp — then fill in your keys
 
-# Windows: copy .env.example .env.local   |   mac/Linux: cp .env.example .env.local
-# then paste your LiveKit, Deepgram, Groq and ElevenLabs keys into .env.local
-
-python scripts/check_env.py
+python scripts/check_env.py          # everything [OK]?
+python scripts/check_calendar.py --test-book
+python main.py console               # talk to Aria through your mic
 ```
 
-## Google Calendar setup
+No Google setup yet? Set `CALENDAR_PROVIDER=memory` to use a temporary in-memory calendar.
 
-1. Google Cloud Console → new project → enable **Google Calendar API**.
-2. IAM & Admin → Service Accounts → create one → Keys → Add key → JSON.
-   Save it as `credentials/google-service-account.json` (ignored by git).
-3. Google Calendar → create a calendar (time zone = the business's) → Settings →
-   Share with specific people → add the service account email with **Make changes to events**.
-4. Copy the calendar's **Calendar ID** into `GOOGLE_CALENDAR_ID` in `.env.local`.
-5. `python scripts/check_calendar.py --test-book` should create and delete a test event.
+### Google Calendar setup
 
-No Google setup? Set `CALENDAR_PROVIDER=memory` to run with a fake in-memory calendar.
+1. Google Cloud Console → new project → enable the **Google Calendar API**.
+2. IAM → Service Accounts → create one → Keys → JSON. Save it as
+   `credentials/google-service-account.json` (git-ignored).
+3. Create a calendar (time zone = the business's) and share it with the service account's email
+   with **Make changes to events**.
+4. Put the calendar's ID in `GOOGLE_CALENDAR_ID`.
 
-## How booking stays safe
-
-The LLM proposes, the code decides. Every tool call is validated in Python before it touches the calendar:
-no past times, no closed days, only within opening hours and the booking horizon, the service must exist and
-fit before closing, the phone number must have 10 digits, the slot is re-checked under a lock right before
-writing (no double-booking), and `book_appointment`, `cancel_appointment` and `reschedule_appointment` refuse to
-run until the caller's last reply was a clear "yes". Bookings are found by the phone number they were made with,
-so a caller can only change their own appointments.
-
-## Conversation tests (evals)
-
-`python scripts/run_evals.py` plays 11 scripted callers against the real agent and LLM on an
-in-memory calendar, then checks the outcome (booked / cancelled / moved / correctly refused):
-happy-path booking, taken slot, change of mind, incomplete request, short phone number,
-no confirmation, closed day, unknown service, cancel, cancel with the wrong number, reschedule.
-Results are appended to `logs/evals.jsonl`. `pytest` also runs the harness offline with a
-scripted fake LLM, so the tool wiring and guards are tested without network access.
-
-## Run
+## Testing and evaluation
 
 ```bash
-python main.py console   # talk through your laptop mic + speakers
-python main.py dev       # connect to LiveKit Cloud → test in the browser Agent Console
-python scripts/chat.py   # text-chat with Aria (fast prompt testing, no voice)
-pytest                   # run tests
+pytest                                       # 123 unit tests, offline
+python scripts/run_evals.py --repeat 3       # scripted callers vs the real LLM
+python scripts/metrics_report.py --failed    # latency, completion, failures -> docs/metrics.md
 ```
 
-## Tuning turn-taking
+The eval suite covers 11 scenarios: happy-path booking, taken slot, change of mind, incomplete
+request, short phone number, no confirmation, closed day, unknown service, cancel, cancel with the
+wrong number, and reschedule. Each passes only if the calendar ends in the right state.
 
-All in `.env.local`, no code changes:
+## Deployment
 
-| Setting | Default | Effect |
-|---|---|---|
-| `MIN_ENDPOINTING_DELAY` / `MAX_ENDPOINTING_DELAY` | 0.5 / 1.5s | How long Aria waits after the caller stops talking. Lower = snappier, higher = fewer cut-offs. |
-| `ENDPOINTING_MODE` | fixed | `dynamic` adapts to each caller but can drift upward after long silences. |
-| `LLM_FALLBACK` | true | Switch to LiveKit Inference if Groq rate-limits or fails. |
-| `PREEMPTIVE_GENERATION` | false | Start the LLM before the caller finishes. Faster, but doubles LLM requests. |
-| `MIN_INTERRUPTION_DURATION` | 0.5s | Shorter sounds (coughs, "mm") don't interrupt Aria. |
-| `FALSE_INTERRUPTION_TIMEOUT` | 1.5s | Aria resumes if an "interruption" was just noise. |
-| `USER_AWAY_TIMEOUT` | 10s | Silence before Aria asks "are you still there?" |
-| `VOICE_SPEED` / `VOICE_STABILITY` | 1.0 / 0.5 | ElevenLabs speaking rate and expressiveness. |
+Agent on LiveKit Cloud, phone number, and web demo on Vercel: [`docs/deploy.md`](docs/deploy.md).
 
-## Customise the business
+## Customise for another business
 
-Edit `config/business.yaml` — name, hours, services, policies, receptionist name and greeting. The persona prompt is generated from it, so no code changes are needed.
+Edit `config/business.yaml`: name, hours, services and durations, policies, receptionist name,
+greeting and farewell. The prompt, speech-recognition keyterms and booking rules all follow from it.
 
-## Roadmap
+## Limitations and next steps
 
-- [x] Day 1 — Repo, structure, voice pipeline, persona
-- [x] Day 2 — Deepgram STT + Groq LLM, latency tracking
-- [x] Day 3 — ElevenLabs TTS, pauses, interruptions, silence handling, end-call
-- [x] Day 4 — Google Calendar: check slots, book, confirm, alternatives for taken slots
-- [x] Day 5 — Cancel, reschedule, unclear/incomplete answers, automated conversation tests
-- [x] Day 6 — Metrics: latency, task completion, bookings, failed conversations
-- [ ] Day 7 — Deploy, phone number, demo video
+- LiveKit's own phone numbers are US-only; an Indian number needs a SIP provider (see deploy guide).
+- English only. Deepgram and ElevenLabs support Hindi, which is a natural next step.
+- No SMS or WhatsApp confirmation after booking yet.
+- A caller is identified by phone number only; a production version would add verification.
 
-## Metrics
+## Build log
 
-Every call is recorded in `logs/calls.jsonl` (phone numbers masked): per-turn latency, tools used, how the call
-ended, and an outcome — `booked`, `cancelled`, `rescheduled`, `info_only`, `incomplete` or `failed` (with the reason).
-
-```bash
-python scripts/run_evals.py --repeat 3     # automated task-completion rate (33 scripted conversations)
-python scripts/metrics_report.py           # writes docs/metrics.md
-python scripts/metrics_report.py --failed  # + transcripts of failed calls
-```
-
-| Metric | How it's measured |
-|---|---|
-| Response latency (p50 / p95) | Caller stops speaking → Aria's audio starts, every turn of every real call |
-| Task completion | Evals: scripted callers vs the real agent, pass only if the calendar ends in the right state. Real calls: share of booking/cancel/move attempts the tool confirmed |
-| Successful bookings | Calls where `book_appointment` returned BOOKED |
-| Failed conversations | Errors, dead lines, or tasks started but never completed — with transcripts for debugging |
-
-Latest numbers: see [`docs/metrics.md`](docs/metrics.md).
+Built day by day; decisions, bugs found in testing and their fixes: [`docs/progress.md`](docs/progress.md).

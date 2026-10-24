@@ -29,6 +29,7 @@ from receptionist.call_control import (
     last_user_text,
 )
 from receptionist.call_record import CallRecord
+from receptionist.caller_id import caller_id_capability, caller_number
 from receptionist.config import PROJECT_ROOT, load_settings
 from receptionist.latency import LatencyTracker
 from receptionist.persona import BOOKING_CAPABILITIES, Persona
@@ -89,7 +90,18 @@ class Receptionist(Agent):
         self.scheduler = booking_scheduler or scheduler
         self._greet = greet
         self.record: CallRecord | None = None  # set per call by the entrypoint
+        self.caller_number: str | None = None
         super().__init__(instructions=persona.instructions(BOOKING_CAPABILITIES))
+
+    async def use_caller_id(self, number: str) -> None:
+        """Phone calls: let Aria offer the number the caller is phoning from."""
+        if self.caller_number == number:
+            return
+        self.caller_number = number
+        logger.info("caller ID: number ending %s", number[-4:])
+        await self.update_instructions(
+            persona.instructions(BOOKING_CAPABILITIES + [caller_id_capability(number)])
+        )
 
     def _log_tool(self, name: str, result: str) -> str:
         logger.info("TOOL result: %s", result)
@@ -396,3 +408,40 @@ async def entrypoint(ctx: JobContext) -> None:
     agent.record = record
     await session.start(agent=agent, room=ctx.room)
     await ctx.connect()
+    _watch_for_caller_id(ctx, agent)
+    _enforce_time_limit(session)
+
+
+def _watch_for_caller_id(ctx: JobContext, agent: Receptionist) -> None:
+    """Phone callers join as SIP participants carrying their number as an attribute."""
+    digits = int(persona.receptionist.get("phone_digits", 10))
+
+    def _check(participant) -> None:
+        number = caller_number(getattr(participant, "attributes", None), digits)
+        if number:
+            task = asyncio.create_task(agent.use_caller_id(number))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+
+    for p in ctx.room.remote_participants.values():
+        _check(p)
+    ctx.room.on("participant_connected", _check)
+
+
+def _enforce_time_limit(session: AgentSession) -> None:
+    """End very long calls politely. Protects API credits when the demo is public."""
+
+    async def _limit() -> None:
+        await asyncio.sleep(settings.max_call_minutes * 60)
+        logger.info("call reached the %.0f-minute limit, ending", settings.max_call_minutes)
+        hang_up(
+            session,
+            "I'm sorry, we've reached the time limit for this call. Please call again if "
+            "you need anything else. Goodbye!",
+            reason="time_limit",
+        )
+
+    task = asyncio.create_task(_limit())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    session.on("close", lambda _ev: task.cancel())

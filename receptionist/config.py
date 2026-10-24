@@ -61,6 +61,7 @@ class Settings:
     calendar_provider: str
     google_calendar_id: str
     google_service_account_file: Path
+    max_call_minutes: float
     slot_minutes: int
     min_notice_minutes: int
     booking_horizon_days: int
@@ -106,9 +107,18 @@ def _float(name: str, default: float, lo: float, hi: float) -> float:
     return value
 
 
+SECRET_MOUNT_DIR = Path("/etc/secrets")
+
+
 def _path(raw: str) -> Path:
+    """Resolve a file path. On LiveKit Cloud, files uploaded with `--secret-mount` live in
+    /etc/secrets/<filename>, so fall back there when the local path doesn't exist."""
     p = Path(raw.strip())
-    return p if p.is_absolute() else PROJECT_ROOT / p
+    p = p if p.is_absolute() else PROJECT_ROOT / p
+    mounted = SECRET_MOUNT_DIR / p.name
+    if not p.exists() and mounted.exists():
+        return mounted
+    return p
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -170,6 +180,7 @@ def load_settings() -> Settings:
         google_service_account_file=_path(
             os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials/google-service-account.json")
         ),
+        max_call_minutes=_float("MAX_CALL_MINUTES", 8, 1, 120),
         slot_minutes=int(_float("SLOT_MINUTES", 30, 5, 240)),
         min_notice_minutes=int(_float("MIN_NOTICE_MINUTES", 60, 0, 10080)),
         booking_horizon_days=int(_float("BOOKING_HORIZON_DAYS", 30, 1, 365)),

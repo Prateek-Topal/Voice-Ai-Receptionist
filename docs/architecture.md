@@ -25,6 +25,9 @@ flowchart TD
 | `receptionist/calendar_client.py` | Google Calendar (service account) and in-memory calendar |
 | `receptionist/call_control.py` | Goodbye detection (hang-up) and "yes" detection (booking guard) |
 | `receptionist/reply_guard.py` | Cuts replies after the first question |
+| `receptionist/caller_id.py` | Reads the phone caller's number from the SIP participant |
+| `receptionist/call_record.py` / `metrics.py` | Per-call outcome tracking and the metrics report |
+| `Dockerfile` / `deploy/` | LiveKit Cloud image, dispatch rule, production secrets template |
 
 ## Design decisions
 

@@ -1,0 +1,13 @@
+{
+  "dispatch_rule": {
+    "name": "Aria inbound calls",
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "call-"
+      }
+    },
+    "roomConfig": {
+      "agents": [{ "agentName": "receptionist" }]
+    }
+  }
+}

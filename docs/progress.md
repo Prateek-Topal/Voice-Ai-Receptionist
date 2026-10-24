@@ -87,3 +87,13 @@ Latency (Day 2 → Day 3):
 - [x] Successful bookings, cancellations, reschedules counted from tool results (not from what the LLM said)
 - [x] Failed conversations listed by reason, with transcripts (`metrics_report.py --failed`)
 - [x] `docs/metrics.md` generated for the README (119 unit tests)
+
+## Day 7 — Ship
+- [x] Dockerfile (LiveKit's pip template, Python 3.12, non-root, models pre-downloaded) + .dockerignore
+- [x] Dependencies pinned to the tested versions (livekit-agents 1.8.6) for reproducible deploys
+- [x] Google key delivered as a LiveKit file-mounted secret (`/etc/secrets/…`), found automatically
+- [x] Phone: dispatch rule for inbound calls (`deploy/dispatch-rule.json`); caller ID offered from `sip.phoneNumber`
+- [x] Safety for a public demo: `MAX_CALL_MINUTES` time limit, separate revocable key for the web app
+- [x] Guides: `docs/deploy.md` (agent, phone, Vercel web demo), `docs/demo-script.md`, `docs/resume.md`
+- [x] Final README: results, architecture diagram, design decisions, setup, testing (123 tests)
+- [ ] Deployed agent URL / phone number / web demo URL / video link added to README
